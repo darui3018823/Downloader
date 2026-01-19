@@ -8,7 +8,7 @@ use std::process::Command;
 /// yt-dlpを使用した動画ダウンローダー
 #[derive(Parser)]
 #[command(name = "downloader")]
-#[command(version = "1.1.0")]
+#[command(version = "1.2.0")]
 #[command(about = "yt-dlpを使用した動画ダウンローダー", long_about = None)]
 struct Cli {
     /// 単一URLをダウンロードして終了
@@ -18,19 +18,116 @@ struct Cli {
     /// 複数のURLを一度にダウンロード
     #[arg(long, num_args = 1..)]
     urls: Option<Vec<String>>,
+
+    /// ダウンロード先ディレクトリ
+    #[arg(short = 'o', long, default_value = "./")]
+    output_dir: String,
+
+    /// 音声のみダウンロード（mp3形式）
+    #[arg(short = 'a', long)]
+    audio_only: bool,
+
+    /// 画質指定 (best, 1080p, 720p, 480p, 360p)
+    #[arg(long)]
+    quality: Option<String>,
+
+    /// 出力フォーマット (mp4, mkv, webm)
+    #[arg(short = 'f', long)]
+    format: Option<String>,
+
+    /// サムネイル・メタデータの埋め込みをスキップ
+    #[arg(long)]
+    no_metadata: bool,
+
+    /// クッキー元のブラウザ (chrome, firefox, edge, safari)
+    #[arg(long, default_value = "chrome")]
+    cookies: String,
+
+    /// プレイリスト全体をダウンロード
+    #[arg(long)]
+    playlist: bool,
+
+    /// yt-dlpを最新バージョンに更新
+    #[arg(long)]
+    update_ytdlp: bool,
+
+    /// 詳細ログを出力
+    #[arg(short = 'v', long)]
+    verbose: bool,
+
+    /// 最小限の出力のみ
+    #[arg(short = 'q', long)]
+    quiet: bool,
+
+    /// クレジット情報を表示
+    #[arg(long)]
+    credit: bool,
+}
+
+/// ダウンロード設定
+#[derive(Debug, Clone)]
+struct DownloadConfig {
+    output_dir: String,
+    audio_only: bool,
+    quality: Option<String>,
+    format: String,
+    no_metadata: bool,
+    cookies: String,
+    playlist: bool,
+    verbose: bool,
+    quiet: bool,
+}
+
+impl DownloadConfig {
+    fn from_cli(cli: &Cli) -> Self {
+        Self {
+            output_dir: cli.output_dir.clone(),
+            audio_only: cli.audio_only,
+            quality: cli.quality.clone(),
+            format: cli.format.clone().unwrap_or_else(|| "mp4".to_string()),
+            no_metadata: cli.no_metadata,
+            cookies: cli.cookies.clone(),
+            playlist: cli.playlist,
+            verbose: cli.verbose,
+            quiet: cli.quiet,
+        }
+    }
+}
+
+/// クレジット情報を表示
+fn show_credits() {
+    println!("╔══════════════════════════════════════════════════════════════╗");
+    println!("║                 Video Downloader v1.2.0                      ║");
+    println!("╠══════════════════════════════════════════════════════════════╣");
+    println!("║  A Rust-based video downloader powered by yt-dlp            ║");
+    println!("║                                                              ║");
+    println!("║  Original Python version: downloader.py                      ║");
+    println!("║  Rust rewrite: v1.0.0 - Complete rewrite in Rust            ║");
+    println!("║                v1.1.0 - CLI enhancements                     ║");
+    println!("║                v1.2.0 - Advanced options                     ║");
+    println!("║                                                              ║");
+    println!("║  Powered by:                                                 ║");
+    println!("║    • yt-dlp (https://github.com/yt-dlp/yt-dlp)              ║");
+    println!("║    • Rust programming language                               ║");
+    println!("║    • clap - CLI argument parsing                             ║");
+    println!("║    • reqwest - HTTP client                                   ║");
+    println!("║    • anyhow - Error handling                                 ║");
+    println!("║                                                              ║");
+    println!("║  License: BSD-2-Clause                                       ║");
+    println!("║                                                              ║");
+    println!("║  Features:                                                   ║");
+    println!("║    ✓ Auto-download yt-dlp from GitHub Releases              ║");
+    println!("║    ✓ Platform detection (YouTube, Twitch, Twitter/X)        ║");
+    println!("║    ✓ Interactive loop mode                                   ║");
+    println!("║    ✓ Single URL & Batch download modes                       ║");
+    println!("║    ✓ Audio-only download (mp3)                               ║");
+    println!("║    ✓ Quality & format selection                              ║");
+    println!("║    ✓ Playlist support                                        ║");
+    println!("╚══════════════════════════════════════════════════════════════╝");
 }
 
 /// yt-dlpバイナリのパスを取得または自動ダウンロード
-fn ensure_ytdlp() -> Result<PathBuf> {
-    // まず環境のPATHからyt-dlpを探す
-    if let Ok(output) = Command::new("yt-dlp").arg("--version").output() {
-        if output.status.success() {
-            println!("✓ 環境からyt-dlpを検出しました");
-            return Ok(PathBuf::from("yt-dlp"));
-        }
-    }
-
-    // PATHにない場合、./binaries/yt-dlp.exeを確認
+fn ensure_ytdlp(force_update: bool) -> Result<PathBuf> {
     let binaries_dir = PathBuf::from("./binaries");
     let ytdlp_path = binaries_dir.join(if cfg!(windows) {
         "yt-dlp.exe"
@@ -38,13 +135,34 @@ fn ensure_ytdlp() -> Result<PathBuf> {
         "yt-dlp"
     });
 
-    if ytdlp_path.exists() {
+    // 強制更新の場合は既存ファイルを削除
+    if force_update && ytdlp_path.exists() {
+        println!("既存のyt-dlpを削除しています...");
+        fs::remove_file(&ytdlp_path).context("既存ファイルの削除に失敗しました")?;
+    }
+
+    // まず環境のPATHからyt-dlpを探す（更新時を除く）
+    if !force_update {
+        if let Ok(output) = Command::new("yt-dlp").arg("--version").output() {
+            if output.status.success() {
+                println!("✓ 環境からyt-dlpを検出しました");
+                return Ok(PathBuf::from("yt-dlp"));
+            }
+        }
+    }
+
+    // ローカルバイナリを確認
+    if ytdlp_path.exists() && !force_update {
         println!("✓ {}からyt-dlpを検出しました", ytdlp_path.display());
         return Ok(ytdlp_path);
     }
 
-    // どちらにもない場合、GitHubからダウンロード
-    println!("yt-dlpが見つかりません。GitHubからダウンロードしています...");
+    // GitHubからダウンロード
+    if force_update {
+        println!("yt-dlpを最新バージョンに更新しています...");
+    } else {
+        println!("yt-dlpが見つかりません。GitHubからダウンロードしています...");
+    }
     download_ytdlp(&binaries_dir, &ytdlp_path)?;
 
     Ok(ytdlp_path)
@@ -118,86 +236,114 @@ impl Platform {
 }
 
 /// プラットフォームに応じたyt-dlpコマンドを構築
-fn build_command(ytdlp_path: &Path, platform: Platform, url: &str) -> Command {
+fn build_command(ytdlp_path: &Path, platform: Platform, url: &str, config: &DownloadConfig) -> Command {
     let mut cmd = Command::new(ytdlp_path);
-    let download_dir = "./";
+    
+    // 出力先ディレクトリを作成
+    if let Err(e) = fs::create_dir_all(&config.output_dir) {
+        eprintln!("警告: 出力ディレクトリの作成に失敗: {}", e);
+    }
+    
+    let output_template = format!("{}/%(title)s.%(ext)s", config.output_dir);
 
-    match platform {
-        Platform::Twitch => {
-            cmd.args([
-                "-f", "1080p60+bestaudio",
-                "--merge-output-format", "mp4",
-                "--embed-thumbnail",
-                "--add-metadata",
-                "--output", &format!("{}/%(title)s.%(ext)s", download_dir),
-                url,
-            ]);
+    // 音声のみモード
+    if config.audio_only {
+        cmd.args(["-x", "--audio-format", "mp3"]);
+        cmd.args(["--output", &output_template, url]);
+        
+        // 詳細ログ / 静寂モード
+        if config.verbose {
+            cmd.arg("--verbose");
+        } else if config.quiet {
+            cmd.arg("--quiet");
         }
-        Platform::YouTube => {
-            cmd.args([
-                "--cookies-from-browser", "firefox",
-                "-4",
-                "-f", "bestvideo+bestaudio",
-                "--merge-output-format", "mp4",
-                "--embed-thumbnail",
-                "--add-metadata",
-                "--geo-bypass-country", "JP",
-                "--output", &format!("{}/%(title)s.%(ext)s", download_dir),
-                url,
-            ]);
-        }
-        Platform::Twitter => {
-            cmd.args([
-                "--merge-output-format", "mp4",
-                "--embed-thumbnail",
-                "--add-metadata",
-                "--output", &format!("{}/%(title)s.%(ext)s", download_dir),
-                url,
-            ]);
-        }
-        Platform::Generic => {
-            println!("最高画質での保存ができない場合があります。");
-            cmd.args([
-                "--merge-output-format", "mp4",
-                "--output", &format!("{}/%(title)s.%(ext)s", download_dir),
-                "--embed-thumbnail",
-                "--add-metadata",
-                "--geo-bypass-country", "JP",
-                "-f", "bestvideo+bestaudio/best",
-                "--no-playlist",
-                "--cookies-from-browser", "firefox",
-                "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.74 Safari/537.36",
-                "--write-sub",
-                "--sub-lang", "all",
-                "--sub-format", "best",
-                "--convert-subs", "srt",
-                "--ignore-errors",
-                url,
-            ]);
-        }
+        
+        return cmd;
     }
 
+    // 画質指定
+    let format_arg = if let Some(quality) = &config.quality {
+        match quality.as_str() {
+            "best" => "bestvideo+bestaudio",
+            q => q, // 1080p, 720p, etc.
+        }
+    } else {
+        // プラットフォーム別のデフォルト画質
+        match platform {
+            Platform::Twitch => "1080p60+bestaudio",
+            Platform::YouTube => "bestvideo+bestaudio",
+            _ => "bestvideo+bestaudio/best",
+        }
+    };
+
+    cmd.args(["-f", format_arg]);
+    cmd.args(["--merge-output-format", &config.format]);
+
+    // メタデータ
+    if !config.no_metadata {
+        cmd.args(["--embed-thumbnail", "--add-metadata"]);
+    }
+
+    // クッキー
+    cmd.args(["--cookies-from-browser", &config.cookies]);
+
+    // プレイリスト
+    if !config.playlist {
+        cmd.arg("--no-playlist");
+    }
+
+    // プラットフォーム固有の設定
+    match platform {
+        Platform::YouTube => {
+            cmd.args(["-4", "--geo-bypass-country", "JP"]);
+        }
+        Platform::Generic => {
+            cmd.args(["--geo-bypass-country", "JP"]);
+            cmd.arg("--user-agent");
+            cmd.arg("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.74 Safari/537.36");
+            cmd.args(["--write-sub", "--sub-lang", "all", "--sub-format", "best", "--convert-subs", "srt"]);
+            cmd.arg("--ignore-errors");
+        }
+        _ => {}
+    }
+
+    // 詳細ログ / 静寂モード
+    if config.verbose {
+        cmd.arg("--verbose");
+    } else if config.quiet {
+        cmd.arg("--quiet");
+    }
+
+    cmd.args(["--output", &output_template, url]);
     cmd
 }
 
 /// URLをダウンロード
-fn download_url(ytdlp_path: &Path, url: &str) -> Result<()> {
+fn download_url(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result<()> {
     if url.trim().is_empty() {
         return Ok(());
     }
 
     // プラットフォームを検出
     let platform = Platform::detect(url);
-    println!("検出されたプラットフォーム: {:?}", platform);
+    
+    if !config.quiet {
+        println!("検出されたプラットフォーム: {:?}", platform);
+    }
 
     // コマンドを構築して実行
-    let mut cmd = build_command(ytdlp_path, platform, url);
+    let mut cmd = build_command(ytdlp_path, platform, url, config);
 
-    println!("ダウンロードを開始します...\n");
+    if !config.quiet {
+        println!("ダウンロードを開始します...\n");
+    }
+    
     let status = cmd.status().context("yt-dlpの実行に失敗しました")?;
 
     if status.success() {
-        println!("\n✓ ダウンロードが完了しました。\n");
+        if !config.quiet {
+            println!("\n✓ ダウンロードが完了しました。\n");
+        }
     } else {
         bail!("yt-dlpがエラーコード{}で終了しました", status.code().unwrap_or(-1));
     }
@@ -206,38 +352,52 @@ fn download_url(ytdlp_path: &Path, url: &str) -> Result<()> {
 }
 
 /// 単一URLモード
-fn download_single(ytdlp_path: &Path, url: &str) -> Result<()> {
-    println!("=== 単一URLモード ===\n");
-    download_url(ytdlp_path, url)
+fn download_single(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result<()> {
+    if !config.quiet {
+        println!("=== 単一URLモード ===\n");
+    }
+    download_url(ytdlp_path, url, config)
 }
 
 /// バッチモード
-fn download_batch(ytdlp_path: &Path, urls: &[String]) -> Result<()> {
-    println!("=== バッチモード ({} URLs) ===\n", urls.len());
+fn download_batch(ytdlp_path: &Path, urls: &[String], config: &DownloadConfig) -> Result<()> {
+    if !config.quiet {
+        println!("=== バッチモード ({} URLs) ===\n", urls.len());
+    }
     
     for (i, url) in urls.iter().enumerate() {
-        println!("[{}/{}] ダウンロード中...", i + 1, urls.len());
-        if let Err(e) = download_url(ytdlp_path, url) {
+        if !config.quiet {
+            println!("[{}/{}] ダウンロード中...", i + 1, urls.len());
+        }
+        if let Err(e) = download_url(ytdlp_path, url, config) {
             eprintln!("エラー: {}", e);
-            println!("次のURLに進みます...\n");
+            if !config.quiet {
+                println!("次のURLに進みます...\n");
+            }
         }
     }
     
-    println!("すべてのダウンロードが完了しました。");
+    if !config.quiet {
+        println!("すべてのダウンロードが完了しました。");
+    }
     Ok(())
 }
 
 /// 対話的ループモード
-fn interactive_loop(ytdlp_path: &Path) -> Result<()> {
-    println!("=== 対話的モード ===");
-    println!("URLを入力してください (exit/quit で終了, Ctrl+C でも終了可能)\n");
+fn interactive_loop(ytdlp_path: &Path, config: &DownloadConfig) -> Result<()> {
+    if !config.quiet {
+        println!("=== 対話的モード ===");
+        println!("URLを入力してください (exit/quit で終了, Ctrl+C でも終了可能)\n");
+    }
 
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
 
     loop {
-        print!("URL> ");
-        io::stdout().flush()?;
+        if !config.quiet {
+            print!("URL> ");
+            io::stdout().flush()?;
+        }
 
         match lines.next() {
             Some(Ok(input)) => {
@@ -245,7 +405,9 @@ fn interactive_loop(ytdlp_path: &Path) -> Result<()> {
 
                 // 終了コマンドチェック
                 if input.eq_ignore_ascii_case("exit") || input.eq_ignore_ascii_case("quit") {
-                    println!("終了します。");
+                    if !config.quiet {
+                        println!("終了します。");
+                    }
                     break;
                 }
 
@@ -255,9 +417,11 @@ fn interactive_loop(ytdlp_path: &Path) -> Result<()> {
                 }
 
                 // URLをダウンロード
-                if let Err(e) = download_url(ytdlp_path, input) {
+                if let Err(e) = download_url(ytdlp_path, input, config) {
                     eprintln!("エラー: {}", e);
-                    println!("次のURLを入力してください。\n");
+                    if !config.quiet {
+                        println!("次のURLを入力してください。\n");
+                    }
                 }
             }
             Some(Err(e)) => {
@@ -266,7 +430,9 @@ fn interactive_loop(ytdlp_path: &Path) -> Result<()> {
             }
             None => {
                 // EOF (Ctrl+D on Unix, Ctrl+Z on Windows) または Ctrl+C
-                println!("\n終了します。");
+                if !config.quiet {
+                    println!("\n終了します。");
+                }
                 break;
             }
         }
@@ -278,25 +444,46 @@ fn interactive_loop(ytdlp_path: &Path) -> Result<()> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    println!("=== yt-dlp Video Downloader v1.1.0 ===\n");
+    // クレジット表示モード
+    if cli.credit {
+        show_credits();
+        return Ok(());
+    }
+
+    // yt-dlp更新モード
+    if cli.update_ytdlp {
+        ensure_ytdlp(true)?;
+        println!("\nyt-dlpの更新が完了しました。");
+        return Ok(());
+    }
+
+    if !cli.quiet {
+        println!("=== yt-dlp Video Downloader v1.2.0 ===\n");
+    }
 
     // yt-dlpの確保
-    let ytdlp_path = ensure_ytdlp()?;
-    println!();
+    let ytdlp_path = ensure_ytdlp(false)?;
+    
+    if !cli.quiet {
+        println!();
+    }
+
+    // ダウンロード設定を作成
+    let config = DownloadConfig::from_cli(&cli);
 
     // モード判定と実行
     match (cli.url, cli.urls) {
         (Some(url), None) => {
             // 単一URLモード
-            download_single(&ytdlp_path, &url)?;
+            download_single(&ytdlp_path, &url, &config)?;
         }
         (None, Some(urls)) => {
             // バッチモード
-            download_batch(&ytdlp_path, &urls)?;
+            download_batch(&ytdlp_path, &urls, &config)?;
         }
         (None, None) => {
             // 対話的ループモード
-            interactive_loop(&ytdlp_path)?;
+            interactive_loop(&ytdlp_path, &config)?;
         }
         (Some(_), Some(_)) => {
             bail!("--url と --urls を同時に指定できません");
