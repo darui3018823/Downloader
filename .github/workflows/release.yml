@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-*'
+      - 'v*.*.*-*-*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Package Extension
+        run: |
+          mkdir -p build
+          zip -r build/privacy-shield.zip \
+            background.js \
+            content.js \
+            content.css \
+            popup.js \
+            popup.html \
+            popup.css \
+            options.js \
+            options.html \
+            options.css \
+            manifest.json \
+            rules.json \
+            icons/
+
+      - name: Generate Release Notes
+        id: release_notes
+        run: |
+          # Fetch all tags to ensure we have the complete history
+          git fetch --tags --force
+          
+          # Ensure we have the latest tag information
+          echo "Current commit: $(git rev-parse HEAD)"
+          echo "Current tag (if any): $(git describe --exact-match --tags 2>/dev/null || echo 'none')"
+          echo "All tags:"
+          git tag --sort=-creatordate | head -10
+          
+          echo ""
+          echo "=== Starting Release Notes Generation ==="
+          
+          # Generate release notes from conventional commits
+          # Save to file to capture output
+          if node build/generate-release-notes.js 2>&1 | tee build/release-notes.tmp; then
+            # Extract the markdown content (skip stderr lines)
+            RELEASE_NOTES=$(grep -v "^===" build/release-notes.tmp | grep -v "^Generating" | grep -v "^Fetching" | grep -v "^Found" | grep -v "^Parsed" | grep -v "^Processing" | grep -v "^Commit categorization" | grep -v "^  -" | grep -v "^Current" | grep -v "^All tags" | grep -v "^Arguments" | grep -v "^No explicit" | grep -v "^auto-detecting" | grep -v "^Successfully" | grep -v "^Could not" | grep -v "^Previous tag")
+            
+            # Verify we have content
+            if [ -z "$(echo "$RELEASE_NOTES" | grep -v '^[[:space:]]*$')" ]; then
+              echo "Warning: No markdown content found in output"
+              echo "## Release Notes" > build/release-notes.md
+              echo "" >> build/release-notes.md
+              echo "No changes documented for this release." >> build/release-notes.md
+            else
+              echo "$RELEASE_NOTES" > build/release-notes.md
+            fi
+          else
+            # Failure - provide fallback content
+            echo "Error: Failed to generate release notes"
+            echo "## Release Notes" > build/release-notes.md
+            echo "" >> build/release-notes.md
+            echo "Release notes could not be generated automatically. Please see the commit history for details." >> build/release-notes.md
+          fi
+          
+          # Read the final release notes for output
+          FINAL_NOTES=$(cat build/release-notes.md)
+          
+          # Set output for next step (use delimiter for multiline)
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$FINAL_NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          echo ""
+          echo "=== Release Notes Generated ===" 
+          cat build/release-notes.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          body: ${{ steps.release_notes.outputs.notes }}
+          files: build/privacy-shield.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,56 @@
+name: Build & Test
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Verify build artifacts
+        run: |
+          test -f background.js && echo "✓ background.js"
+          test -f content.js && echo "✓ content.js"
+          test -f popup.js && echo "✓ popup.js"
+          test -f options.js && echo "✓ options.js"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: build-${{ matrix.node-version }}
+          path: |
+            background.js
+            content.js
+            content.css
+            popup.js
+            popup.html
+            popup.css
+            options.js
+            options.html
+            options.css

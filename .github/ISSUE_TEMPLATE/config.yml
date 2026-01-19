@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📖 ドキュメント
+    url: https://github.com/darui3018823/privacy_shield/blob/main/Readme.md
+    about: READMEで使い方を確認できます
+  - name: 💬 Discussions
+    url: https://github.com/darui3018823/privacy_shield/discussions
+    about: 一般的な質問や議論はDiscussionsをご利用ください
