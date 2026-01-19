@@ -110,13 +110,25 @@ jobs:
           # Get previous tag
           PREVIOUS_TAG=$(git tag --sort=-creatordate | grep -v "${{ github.ref_name }}" | head -n 1)
           
+          echo "Previous tag: $PREVIOUS_TAG"
+          echo "Current tag: ${{ github.ref_name }}"
+          
           if [ -n "$PREVIOUS_TAG" ]; then
-            python3 scripts/generate-release-notes.sh "$PREVIOUS_TAG" "${{ github.ref_name }}" > release-notes.md
+            python3 scripts/generate-release-notes.py "$PREVIOUS_TAG" "${{ github.ref_name }}" > release-notes.md
           else
-            echo "# Initial Release - ${{ github.ref_name }}" > release-notes.md
+            # For initial release, list all commits
+            echo "# Release ${{ github.ref_name }}" > release-notes.md
             echo "" >> release-notes.md
-            python3 scripts/generate-release-notes.sh "HEAD~999999" "${{ github.ref_name }}" >> release-notes.md 2>/dev/null || git log --pretty=format:"- %s" >> release-notes.md
+            python3 scripts/generate-release-notes.py "$(git rev-list --max-parents=0 HEAD)" "${{ github.ref_name }}" >> release-notes.md 2>&1 || {
+              echo "## Initial Release" >> release-notes.md
+              echo "" >> release-notes.md
+              git log --pretty=format:"- %s" >> release-notes.md
+            }
           fi
+          
+          echo "--- Generated Release Notes ---"
+          cat release-notes.md
+          echo "--- End ---"
           
           RELEASE_NOTES=$(cat release-notes.md)
           
