@@ -101,6 +101,9 @@ fn show_credits() {
     println!("╠══════════════════════════════════════════════════════════════╣");
     println!("║  A Rust-based video downloader powered by yt-dlp            ║");
     println!("║                                                              ║");
+    println!("║  Author: darui3018823                                        ║");
+    println!("║  GitHub: https://github.com/darui3018823/Downloader         ║");
+    println!("║                                                              ║");
     println!("║  Original Python version: downloader.py                      ║");
     println!("║  Rust rewrite: v1.0.0 - Complete rewrite in Rust            ║");
     println!("║                v1.1.0 - CLI enhancements                     ║");
