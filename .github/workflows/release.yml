@@ -11,8 +11,83 @@ permissions:
   contents: write
 
 jobs:
+  build:
+    name: Build Release Binaries
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: downloader
+            asset_name: downloader-linux-x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact_name: downloader
+            asset_name: downloader-linux-x86_64-musl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: downloader.exe
+            asset_name: downloader-windows-x86_64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: downloader
+            asset_name: downloader-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: downloader
+            asset_name: downloader-macos-aarch64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install musl tools (Linux musl only)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} --verbose
+
+      - name: Strip binary (Unix)
+        if: matrix.os != 'windows-latest'
+        run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.asset_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+
   release:
     name: Create Release
+    needs: build
     runs-on: ubuntu-latest
 
     steps:
@@ -21,92 +96,60 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - name: Download all artifacts
+        uses: actions/download-artifact@v6
         with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build extension
-        run: npm run build
-
-      - name: Package Extension
-        run: |
-          mkdir -p build
-          zip -r build/privacy-shield.zip \
-            background.js \
-            content.js \
-            content.css \
-            popup.js \
-            popup.html \
-            popup.css \
-            options.js \
-            options.html \
-            options.css \
-            manifest.json \
-            rules.json \
-            icons/
+          path: artifacts
 
       - name: Generate Release Notes
         id: release_notes
         run: |
-          # Fetch all tags to ensure we have the complete history
+          # Fetch all tags
           git fetch --tags --force
           
-          # Ensure we have the latest tag information
-          echo "Current commit: $(git rev-parse HEAD)"
-          echo "Current tag (if any): $(git describe --exact-match --tags 2>/dev/null || echo 'none')"
-          echo "All tags:"
-          git tag --sort=-creatordate | head -10
+          # Get previous tag
+          PREVIOUS_TAG=$(git tag --sort=-creatordate | grep -v "${{ github.ref_name }}" | head -n 1)
           
-          echo ""
-          echo "=== Starting Release Notes Generation ==="
+          echo "## Release Notes" > release-notes.md
+          echo "" >> release-notes.md
           
-          # Generate release notes from conventional commits
-          # Save to file to capture output
-          if node build/generate-release-notes.js 2>&1 | tee build/release-notes.tmp; then
-            # Extract the markdown content (skip stderr lines)
-            RELEASE_NOTES=$(grep -v "^===" build/release-notes.tmp | grep -v "^Generating" | grep -v "^Fetching" | grep -v "^Found" | grep -v "^Parsed" | grep -v "^Processing" | grep -v "^Commit categorization" | grep -v "^  -" | grep -v "^Current" | grep -v "^All tags" | grep -v "^Arguments" | grep -v "^No explicit" | grep -v "^auto-detecting" | grep -v "^Successfully" | grep -v "^Could not" | grep -v "^Previous tag")
-            
-            # Verify we have content
-            if [ -z "$(echo "$RELEASE_NOTES" | grep -v '^[[:space:]]*$')" ]; then
-              echo "Warning: No markdown content found in output"
-              echo "## Release Notes" > build/release-notes.md
-              echo "" >> build/release-notes.md
-              echo "No changes documented for this release." >> build/release-notes.md
-            else
-              echo "$RELEASE_NOTES" > build/release-notes.md
-            fi
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "### Changes since $PREVIOUS_TAG" >> release-notes.md
+            echo "" >> release-notes.md
+            git log --pretty=format:"- %s" ${PREVIOUS_TAG}..${{ github.ref_name }} >> release-notes.md
           else
-            # Failure - provide fallback content
-            echo "Error: Failed to generate release notes"
-            echo "## Release Notes" > build/release-notes.md
-            echo "" >> build/release-notes.md
-            echo "Release notes could not be generated automatically. Please see the commit history for details." >> build/release-notes.md
+            echo "### Initial Release" >> release-notes.md
+            echo "" >> release-notes.md
+            git log --pretty=format:"- %s" >> release-notes.md
           fi
           
-          # Read the final release notes for output
-          FINAL_NOTES=$(cat build/release-notes.md)
+          RELEASE_NOTES=$(cat release-notes.md)
           
-          # Set output for next step (use delimiter for multiline)
           echo "notes<<EOF" >> $GITHUB_OUTPUT
-          echo "$FINAL_NOTES" >> $GITHUB_OUTPUT
+          echo "$RELEASE_NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-          
-          echo ""
-          echo "=== Release Notes Generated ===" 
-          cat build/release-notes.md
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          cd artifacts
+          for dir in */; do
+            artifact_name="${dir%/}"
+            if [ -f "$dir/downloader.exe" ]; then
+              cp "$dir/downloader.exe" "../release/${artifact_name}"
+            elif [ -f "$dir/downloader" ]; then
+              cp "$dir/downloader" "../release/${artifact_name}"
+              chmod +x "../release/${artifact_name}"
+            fi
+          done
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           body: ${{ steps.release_notes.outputs.notes }}
-          files: build/privacy-shield.zip
+          files: release/*
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
