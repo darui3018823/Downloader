@@ -20,10 +20,8 @@ def get_commits(from_tag, to_tag):
             check=False
         )
         commits = result.stdout.strip().split('\n') if result.stdout.strip() else []
-        print(f"DEBUG: Found {len(commits)} commits from {from_tag} to {to_tag}", file=sys.stderr)
         return commits
-    except Exception as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+    except Exception:
         return []
 
 def categorize_commits(commits):
@@ -97,16 +95,13 @@ def main():
     previous_tag = sys.argv[1]
     current_tag = sys.argv[2]
     
-    print(f"DEBUG: Fetching commits from {previous_tag} to {current_tag}", file=sys.stderr)
     commits = get_commits(previous_tag, current_tag)
     
     if not commits:
-        print(f"WARNING: No commits found between {previous_tag} and {current_tag}", file=sys.stderr)
-        print(f"# Release {current_tag}", "")
+        print(f"# Release {current_tag}")
         return
     
     categories = categorize_commits(commits)
-    print(f"DEBUG: Categorized into {len(categories)} categories", file=sys.stderr)
     release_notes = format_release_notes(current_tag, categories)
     
     print(release_notes)
