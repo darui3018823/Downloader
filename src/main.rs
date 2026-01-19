@@ -174,8 +174,7 @@ fn ensure_ytdlp(force_update: bool) -> Result<PathBuf> {
 /// GitHubのReleasesからyt-dlpをダウンロード
 fn download_ytdlp(binaries_dir: &Path, ytdlp_path: &Path) -> Result<()> {
     // binariesディレクトリを作成
-    fs::create_dir_all(binaries_dir)
-        .context("binariesディレクトリの作成に失敗しました")?;
+    fs::create_dir_all(binaries_dir).context("binariesディレクトリの作成に失敗しました")?;
 
     // プラットフォームに応じたダウンロードURL
     let download_url = if cfg!(windows) {
@@ -189,18 +188,19 @@ fn download_ytdlp(binaries_dir: &Path, ytdlp_path: &Path) -> Result<()> {
     println!("ダウンロード中: {}", download_url);
 
     // ファイルをダウンロード
-    let response = reqwest::blocking::get(download_url)
-        .context("yt-dlpのダウンロードに失敗しました")?;
+    let response =
+        reqwest::blocking::get(download_url).context("yt-dlpのダウンロードに失敗しました")?;
 
     if !response.status().is_success() {
         bail!("ダウンロードエラー: ステータスコード {}", response.status());
     }
 
-    let bytes = response.bytes().context("レスポンスの読み取りに失敗しました")?;
+    let bytes = response
+        .bytes()
+        .context("レスポンスの読み取りに失敗しました")?;
 
     // ファイルに書き込み
-    fs::write(ytdlp_path, &bytes)
-        .context("yt-dlpの保存に失敗しました")?;
+    fs::write(ytdlp_path, &bytes).context("yt-dlpの保存に失敗しました")?;
 
     // Unix系OSの場合、実行権限を付与
     #[cfg(unix)]
@@ -239,28 +239,33 @@ impl Platform {
 }
 
 /// プラットフォームに応じたyt-dlpコマンドを構築
-fn build_command(ytdlp_path: &Path, platform: Platform, url: &str, config: &DownloadConfig) -> Command {
+fn build_command(
+    ytdlp_path: &Path,
+    platform: Platform,
+    url: &str,
+    config: &DownloadConfig,
+) -> Command {
     let mut cmd = Command::new(ytdlp_path);
-    
+
     // 出力先ディレクトリを作成
     if let Err(e) = fs::create_dir_all(&config.output_dir) {
         eprintln!("警告: 出力ディレクトリの作成に失敗: {}", e);
     }
-    
+
     let output_template = format!("{}/%(title)s.%(ext)s", config.output_dir);
 
     // 音声のみモード
     if config.audio_only {
         cmd.args(["-x", "--audio-format", "mp3"]);
         cmd.args(["--output", &output_template, url]);
-        
+
         // 詳細ログ / 静寂モード
         if config.verbose {
             cmd.arg("--verbose");
         } else if config.quiet {
             cmd.arg("--quiet");
         }
-        
+
         return cmd;
     }
 
@@ -304,7 +309,15 @@ fn build_command(ytdlp_path: &Path, platform: Platform, url: &str, config: &Down
             cmd.args(["--geo-bypass-country", "JP"]);
             cmd.arg("--user-agent");
             cmd.arg("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.74 Safari/537.36");
-            cmd.args(["--write-sub", "--sub-lang", "all", "--sub-format", "best", "--convert-subs", "srt"]);
+            cmd.args([
+                "--write-sub",
+                "--sub-lang",
+                "all",
+                "--sub-format",
+                "best",
+                "--convert-subs",
+                "srt",
+            ]);
             cmd.arg("--ignore-errors");
         }
         _ => {}
@@ -329,7 +342,7 @@ fn download_url(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result
 
     // プラットフォームを検出
     let platform = Platform::detect(url);
-    
+
     if !config.quiet {
         println!("検出されたプラットフォーム: {:?}", platform);
     }
@@ -340,7 +353,7 @@ fn download_url(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result
     if !config.quiet {
         println!("ダウンロードを開始します...\n");
     }
-    
+
     let status = cmd.status().context("yt-dlpの実行に失敗しました")?;
 
     if status.success() {
@@ -348,7 +361,10 @@ fn download_url(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result
             println!("\n✓ ダウンロードが完了しました。\n");
         }
     } else {
-        bail!("yt-dlpがエラーコード{}で終了しました", status.code().unwrap_or(-1));
+        bail!(
+            "yt-dlpがエラーコード{}で終了しました",
+            status.code().unwrap_or(-1)
+        );
     }
 
     Ok(())
@@ -367,7 +383,7 @@ fn download_batch(ytdlp_path: &Path, urls: &[String], config: &DownloadConfig) -
     if !config.quiet {
         println!("=== バッチモード ({} URLs) ===\n", urls.len());
     }
-    
+
     for (i, url) in urls.iter().enumerate() {
         if !config.quiet {
             println!("[{}/{}] ダウンロード中...", i + 1, urls.len());
@@ -379,7 +395,7 @@ fn download_batch(ytdlp_path: &Path, urls: &[String], config: &DownloadConfig) -
             }
         }
     }
-    
+
     if !config.quiet {
         println!("すべてのダウンロードが完了しました。");
     }
@@ -466,7 +482,7 @@ fn main() -> Result<()> {
 
     // yt-dlpの確保
     let ytdlp_path = ensure_ytdlp(false)?;
-    
+
     if !cli.quiet {
         println!();
     }
