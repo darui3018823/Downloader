@@ -1,6 +1,6 @@
-# Video Downloader (Rust版)
+# Video Downloader
 
-Pythonの`downloader.py`をRustで書き直した動画ダウンローダーです。yt-dlpを使用して、複数のプラットフォームから動画をダウンロードします。
+yt-dlpを使用して、複数のプラットフォームから動画をダウンロードします。
 
 ## 特徴
 
@@ -93,11 +93,4 @@ cargo build --release
 
 ## ライセンス
 
-MIT License
-
-## 元のPython版との違い
-
-- Rustで実装され、型安全性とパフォーマンスが向上
-- yt-dlpの自動ダウンロード機能を追加
-- より詳細なエラーハンドリング
-- クロスプラットフォーム対応 (Windows/Linux/macOS)
+BSD-2-Clause
