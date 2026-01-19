@@ -1,94 +1,104 @@
-#!/bin/bash
-# generate-release-notes.sh
-# Conventional Commits に基づいてリリースノートを生成
+#!/usr/bin/env python3
+"""
+Generate categorized release notes from Conventional Commits.
 
-PREVIOUS_TAG=$1
-CURRENT_TAG=$2
+Usage: python3 generate-release-notes.py <previous-tag> <current-tag>
+"""
 
-if [ -z "$PREVIOUS_TAG" ] || [ -z "$CURRENT_TAG" ]; then
-    echo "Usage: $0 <previous-tag> <current-tag>"
-    exit 1
-fi
+import subprocess
+import re
+import sys
+from collections import defaultdict
 
-# コミットのリスト取得
-COMMITS=$(git log ${PREVIOUS_TAG}..${CURRENT_TAG} --pretty=format:"%h %s")
+def get_commits(from_tag, to_tag):
+    """Fetch commits between two tags."""
+    try:
+        result = subprocess.run(
+            ["git", "log", f"{from_tag}..{to_tag}", "--pretty=format:%h %s"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout.strip().split('\n') if result.stdout.strip() else []
+    except subprocess.CalledProcessError:
+        return []
 
-# カテゴリごとに分類
-FEATURES=""
-FIXES=""
-DOCS=""
-REFACTOR=""
-CHORE=""
-PERF=""
-OTHER=""
-
-while IFS= read -r line; do
-    if [ -z "$line" ]; then
-        continue
-    fi
+def categorize_commits(commits):
+    """Categorize commits by Conventional Commits type."""
+    categories = defaultdict(list)
     
-    HASH=$(echo "$line" | awk '{print $1}')
-    MESSAGE=$(echo "$line" | cut -d' ' -f2-)
+    for commit in commits:
+        if not commit.strip():
+            continue
+            
+        parts = commit.split(' ', 1)
+        if len(parts) != 2:
+            continue
+            
+        hash_short = parts[0]
+        message = parts[1]
+        
+        # Match conventional commit format
+        match = re.match(r'^(feat|fix|docs|refactor|perf|chore|build|ci|style|test|revert)(\(.+?\))?:\s+(.+)$', message)
+        
+        if match:
+            commit_type = match.group(1)
+            detail = match.group(3)
+            categories[commit_type].append((detail, hash_short))
+        else:
+            categories['other'].append((message, hash_short))
     
-    if [[ $MESSAGE =~ ^feat(\(.+\))?:\ ]]; then
-        FEATURES+="- ${MESSAGE#feat*: } (${HASH})"$'\n'
-    elif [[ $MESSAGE =~ ^fix(\(.+\))?:\ ]]; then
-        FIXES+="- ${MESSAGE#fix*: } (${HASH})"$'\n'
-    elif [[ $MESSAGE =~ ^docs(\(.+\))?:\ ]]; then
-        DOCS+="- ${MESSAGE#docs*: } (${HASH})"$'\n'
-    elif [[ $MESSAGE =~ ^refactor(\(.+\))?:\ ]]; then
-        REFACTOR+="- ${MESSAGE#refactor*: } (${HASH})"$'\n'
-    elif [[ $MESSAGE =~ ^perf(\(.+\))?:\ ]]; then
-        PERF+="- ${MESSAGE#perf*: } (${HASH})"$'\n'
-    elif [[ $MESSAGE =~ ^chore(\(.+\))?:\ ]]; then
-        CHORE+="- ${MESSAGE#chore*: } (${HASH})"$'\n'
-    else
-        OTHER+="- $MESSAGE (${HASH})"$'\n'
-    fi
-done <<< "$COMMITS"
+    return categories
 
-# リリースノートを出力
-echo "# Release ${CURRENT_TAG}"
-echo ""
+def format_release_notes(current_tag, categories):
+    """Format categorized commits as release notes."""
+    type_emoji = {
+        'feat': '✨ Features',
+        'fix': '🐛 Bug Fixes',
+        'perf': '⚡ Performance',
+        'refactor': '🔧 Refactoring',
+        'docs': '📚 Documentation',
+        'chore': '🧹 Chores',
+        'build': '🏗️ Build',
+        'ci': '🤖 CI/CD',
+        'style': '💄 Style',
+        'test': '✅ Tests',
+        'revert': '⏮️ Reverts',
+        'other': 'Other'
+    }
+    
+    output = [f"# Release {current_tag}", ""]
+    
+    # Define order
+    order = ['feat', 'fix', 'perf', 'refactor', 'docs', 'chore', 'build', 'ci', 'style', 'test', 'revert', 'other']
+    
+    for commit_type in order:
+        if commit_type not in categories or not categories[commit_type]:
+            continue
+        
+        emoji_header = type_emoji.get(commit_type, commit_type)
+        output.append(f"## {emoji_header}")
+        
+        for detail, hash_short in categories[commit_type]:
+            output.append(f"- {detail} ({hash_short})")
+        
+        output.append("")
+    
+    return '\n'.join(output)
 
-if [ ! -z "$FEATURES" ]; then
-    echo "## ✨ Features"
-    echo -e "$FEATURES"
-    echo ""
-fi
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: generate-release-notes.py <previous-tag> <current-tag>", file=sys.stderr)
+        sys.exit(1)
+    
+    previous_tag = sys.argv[1]
+    current_tag = sys.argv[2]
+    
+    commits = get_commits(previous_tag, current_tag)
+    categories = categorize_commits(commits)
+    release_notes = format_release_notes(current_tag, categories)
+    
+    print(release_notes)
 
-if [ ! -z "$FIXES" ]; then
-    echo "## 🐛 Bug Fixes"
-    echo -e "$FIXES"
-    echo ""
-fi
-
-if [ ! -z "$PERF" ]; then
-    echo "## ⚡ Performance"
-    echo -e "$PERF"
-    echo ""
-fi
-
-if [ ! -z "$REFACTOR" ]; then
-    echo "## 🔧 Refactoring"
-    echo -e "$REFACTOR"
-    echo ""
-fi
-
-if [ ! -z "$DOCS" ]; then
-    echo "## 📚 Documentation"
-    echo -e "$DOCS"
-    echo ""
-fi
-
-if [ ! -z "$CHORE" ]; then
-    echo "## 🧹 Chores"
-    echo -e "$CHORE"
-    echo ""
-fi
-
-if [ ! -z "$OTHER" ]; then
-    echo "## Other Changes"
-    echo -e "$OTHER"
-    echo ""
-fi
+if __name__ == '__main__':
+    main()
