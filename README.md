@@ -1,11 +1,12 @@
-# Video Downloader
+# Video Downloader (Rust版)
 
-yt-dlpを使用して、複数のプラットフォームから動画をダウンロードします。
+Pythonの`downloader.py`をRustで書き直した動画ダウンローダーです。yt-dlpを使用して、複数のプラットフォームから動画をダウンロードします。
 
 ## 特徴
 
 - 🚀 **自動yt-dlpダウンロード**: yt-dlpがシステムにインストールされていない場合、自動的にGitHub Releasesからダウンロードして`./binaries/`に保存します
 - 🎯 **プラットフォーム自動検出**: URL から Twitch、YouTube、Twitter/X を自動検出し、最適な設定でダウンロード
+- 📦 **3つの動作モード**: 対話的ループモード、単一URLモード、バッチモード
 - 📦 **単一実行ファイル**: Rustでコンパイルされた実行ファイル1つで動作
 - ⚡ **高速・軽量**: Rustの高パフォーマンス
 
@@ -44,7 +45,7 @@ cargo build --release
 ### ソースからビルドする場合
 
 ```bash
-# リポジトリをクローン
+# リポジリをクローン
 git clone <repository-url>
 cd Downloader
 
@@ -54,20 +55,44 @@ cargo build --release
 
 ## 使い方
 
+### モード1: 対話的ループモード (デフォルト)
+
+引数なしで起動すると、複数のURLを連続してダウンロードできます。
+
 ```bash
-# 実行
-./target/release/downloader
-
-# または、Windowsの場合
 .\target\release\downloader.exe
+
+# URLを連続して入力
+URL> https://www.youtube.com/watch?v=...
+URL> https://www.twitch.tv/videos/...
+URL> exit  # または quit、Ctrl+C で終了
 ```
 
-起動後、ダウンロードしたい動画のURLを入力してください:
+**終了方法:**
+- `exit` または `quit` と入力
+- Ctrl+C で強制終了
+- Ctrl+Z (Windows) または Ctrl+D (Unix) でEOF
 
+### モード2: 単一URLモード
+
+1つのURLをダウンロードして終了します。
+
+```bash
+.\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..."
 ```
-=== yt-dlp Video Downloader ===
 
-動画のURLを入力してください: https://www.youtube.com/watch?v=...
+### モード3: バッチモード
+
+複数のURLを一度にダウンロードします。
+
+```bash
+.\target\release\downloader.exe --urls "https://youtube.com/..." "https://twitch.tv/..." "https://x.com/..."
+```
+
+### ヘルプ表示
+
+```bash
+.\target\release\downloader.exe --help
 ```
 
 ## yt-dlpについて
@@ -90,6 +115,28 @@ cargo build --release
 
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) - 動画ダウンロードツール (自動ダウンロード)
 - Rust 1.70以上
+
+## バージョン履歴
+
+### v1.1.0 (2026-01-20)
+- ✨ **対話的ループモード**: 複数URLを連続してダウンロード可能に
+- ✨ **単一URLモード** (`--url`): 1つのURLを指定してダウンロード
+- ✨ **バッチモード** (`--urls`): 複数URLを一度にダウンロード
+- 🎮 終了コマンド対応: `exit`, `quit`, Ctrl+C, Ctrl+Z/D
+
+### v1.0.0 (2026-01-20)
+- 🎉 初回リリース
+- ✨ yt-dlp自動ダウンロード機能
+- ✨ プラットフォーム自動検出 (YouTube, Twitch, Twitter/X)
+- ✨ プラットフォーム別最適化設定
+
+## 元のPython版との違い
+
+- Rustで実装され、型安全性とパフォーマンスが向上
+- yt-dlpの自動ダウンロード機能を追加
+- 3つの動作モード (対話的/単一/バッチ)
+- より詳細なエラーハンドリング
+- クロスプラットフォーム対応 (Windows/Linux/macOS)
 
 ## ライセンス
 
