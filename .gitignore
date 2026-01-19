@@ -1,0 +1,27 @@
+/target
+
+# Downloaded binaries
+/binaries/
+
+# Downloaded videos
+*.mp4
+*.mkv
+*.webm
+*.flv
+*.avi
+*.mov
+
+# Subtitles
+*.srt
+*.vtt
+*.ass
+
+# Thumbnails
+*.jpg
+*.jpeg
+*.png
+*.webp
+
+# yt-dlp metadata
+*.info.json
+*.description
