@@ -40,8 +40,9 @@ struct Cli {
     no_metadata: bool,
 
     /// クッキー元のブラウザ (chrome, firefox, edge, safari)
-    #[arg(long, default_value = "chrome")]
-    cookies: String,
+    /// 指定しない場合はクッキーを使用しません
+    #[arg(long)]
+    cookies: Option<String>,
 
     /// プレイリスト全体をダウンロード
     #[arg(long)]
@@ -72,7 +73,7 @@ struct DownloadConfig {
     quality: Option<String>,
     format: String,
     no_metadata: bool,
-    cookies: String,
+    cookies: Option<String>,
     playlist: bool,
     verbose: bool,
     quiet: bool,
@@ -292,8 +293,10 @@ fn build_command(
         cmd.args(["--embed-thumbnail", "--add-metadata"]);
     }
 
-    // クッキー
-    cmd.args(["--cookies-from-browser", &config.cookies]);
+    // クッキー（指定された場合のみ）
+    if let Some(ref cookies) = config.cookies {
+        cmd.args(["--cookies-from-browser", cookies]);
+    }
 
     // プレイリスト
     if !config.playlist {
