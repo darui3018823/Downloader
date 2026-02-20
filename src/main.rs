@@ -1,12 +1,12 @@
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde_json::Value;
-use std::fs;
-use std::io::{self, BufRead, Write};
+use std::fs::{self, OpenOptions};
+use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const REPO_OWNER: &str = "darui3018823";
 const REPO_NAME: &str = "Downloader";
@@ -21,6 +21,64 @@ fn parse_threads(value: &str) -> std::result::Result<usize, String> {
     }
 
     Ok(parsed)
+}
+
+fn sanitize_file_name(input: &str) -> String {
+    let invalid = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
+    let mut result = input
+        .chars()
+        .map(|c| {
+            if invalid.contains(&c) || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect::<String>();
+
+    result = result.trim().to_string();
+    if result.is_empty() {
+        "download".to_string()
+    } else {
+        result
+    }
+}
+
+fn error_log_dir() -> PathBuf {
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+        return PathBuf::from(user_profile)
+            .join("downloader")
+            .join("errorlog");
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join("downloader").join("errorlog");
+    }
+
+    PathBuf::from("./errorlog")
+}
+
+fn new_error_log_path(url: &str) -> Result<PathBuf> {
+    let log_dir = error_log_dir();
+    fs::create_dir_all(&log_dir).context("errorlogディレクトリの作成に失敗しました")?;
+
+    let epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let url_tag = sanitize_file_name(url).chars().take(48).collect::<String>();
+    let file_name = format!("{}_{}.log", epoch, url_tag);
+
+    Ok(log_dir.join(file_name))
+}
+
+fn append_log(log_path: &Path, message: &str) {
+    let mut file = match OpenOptions::new().create(true).append(true).open(log_path) {
+        Ok(file) => file,
+        Err(_) => return,
+    };
+
+    let _ = writeln!(file, "{}", message);
 }
 
 /// yt-dlpを使用した動画ダウンローダー
@@ -102,6 +160,10 @@ struct Cli {
     #[arg(short = 't', long, value_parser = parse_threads)]
     threads: Option<usize>,
 
+    /// 抽出のみyt-dlpを使い、ダウンロードはRustで実行（--url 専用・実験的）
+    #[arg(long)]
+    rust_download: bool,
+
     /// クレジット情報を表示
     #[arg(long)]
     credit: bool,
@@ -124,6 +186,7 @@ struct DownloadConfig {
     verbose: bool,
     quiet: bool,
     threads: Option<usize>,
+    rust_download: bool,
 }
 
 impl DownloadConfig {
@@ -143,6 +206,7 @@ impl DownloadConfig {
             verbose: cli.verbose,
             quiet: cli.quiet,
             threads: cli.threads,
+            rust_download: cli.rust_download,
         }
     }
 }
@@ -632,6 +696,282 @@ fn execute_download_command(mut cmd: Command, suppress_ytdlp_output: bool) -> Re
     }
 }
 
+#[derive(Debug)]
+struct RustDownloadCandidate {
+    media_url: String,
+    title: String,
+    ext: String,
+    protocol: String,
+    headers: Vec<(String, String)>,
+}
+
+fn is_stream_protocol(protocol: &str) -> bool {
+    let lower = protocol.to_ascii_lowercase();
+    lower.contains("m3u8")
+        || lower.contains("dash")
+        || lower.contains("hls")
+        || lower.contains("fragment")
+}
+
+fn extract_candidate_from_json(
+    metadata: &Value,
+    config: &DownloadConfig,
+) -> Result<RustDownloadCandidate> {
+    let requested = metadata
+        .get("requested_downloads")
+        .and_then(Value::as_array)
+        .and_then(|arr| arr.first());
+
+    let media_url = requested
+        .and_then(|v| v.get("url"))
+        .and_then(Value::as_str)
+        .or_else(|| metadata.get("url").and_then(Value::as_str))
+        .context("抽出JSONに直リンクURLがありません")?
+        .to_string();
+
+    let protocol = requested
+        .and_then(|v| v.get("protocol"))
+        .and_then(Value::as_str)
+        .or_else(|| metadata.get("protocol").and_then(Value::as_str))
+        .unwrap_or("unknown")
+        .to_string();
+
+    let has_fragments = requested
+        .and_then(|v| v.get("fragments"))
+        .and_then(Value::as_array)
+        .map(|arr| !arr.is_empty())
+        .unwrap_or(false)
+        || metadata
+            .get("fragments")
+            .and_then(Value::as_array)
+            .map(|arr| !arr.is_empty())
+            .unwrap_or(false);
+
+    if has_fragments || is_stream_protocol(&protocol) {
+        bail!(
+            "このURLは分割/ストリーミング形式のためRust単体DL対象外です。ハングや失敗時は --rust-download を外して実行してください"
+        );
+    }
+
+    let title = metadata
+        .get("title")
+        .and_then(Value::as_str)
+        .map(sanitize_file_name)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            metadata
+                .get("id")
+                .and_then(Value::as_str)
+                .map(sanitize_file_name)
+                .unwrap_or_else(|| "download".to_string())
+        });
+
+    let ext = requested
+        .and_then(|v| v.get("ext"))
+        .and_then(Value::as_str)
+        .or_else(|| metadata.get("ext").and_then(Value::as_str))
+        .unwrap_or(&config.format)
+        .to_string();
+
+    let header_source = requested
+        .and_then(|v| v.get("http_headers"))
+        .or_else(|| metadata.get("http_headers"));
+
+    let mut headers = Vec::new();
+    if let Some(map) = header_source.and_then(Value::as_object) {
+        for (key, value) in map {
+            if let Some(text) = value.as_str() {
+                headers.push((key.clone(), text.to_string()));
+            }
+        }
+    }
+
+    Ok(RustDownloadCandidate {
+        media_url,
+        title,
+        ext,
+        protocol,
+        headers,
+    })
+}
+
+fn extract_with_ytdlp(
+    ytdlp_path: &Path,
+    url: &str,
+    config: &DownloadConfig,
+    log_path: &Path,
+) -> Result<Value> {
+    let mut cmd = Command::new(ytdlp_path);
+    cmd.args(["-J", "--no-playlist"]);
+
+    if config.audio_only {
+        cmd.args(["-f", "bestaudio/best"]);
+    }
+
+    if let Some(cookies) = &config.cookies {
+        cmd.args(["--cookies-from-browser", cookies]);
+    }
+
+    cmd.arg(url);
+
+    append_log(log_path, &format!("[extract] command: {:?}", cmd));
+    let output = cmd.output().context("yt-dlp抽出の実行に失敗しました")?;
+
+    append_log(
+        log_path,
+        &format!("[extract] exit: {:?}", output.status.code()),
+    );
+    append_log(
+        log_path,
+        &format!(
+            "[extract] stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    );
+
+    if !output.status.success() {
+        bail!(
+            "yt-dlp抽出が失敗しました。詳細はログを確認してください: {}",
+            log_path.display()
+        );
+    }
+
+    let stdout = String::from_utf8(output.stdout).context("抽出JSONのUTF-8変換に失敗しました")?;
+    append_log(log_path, &format!("[extract] stdout_len: {}", stdout.len()));
+
+    let metadata: Value =
+        serde_json::from_str(&stdout).context("yt-dlp抽出JSONの解析に失敗しました")?;
+    append_log(
+        log_path,
+        &format!(
+            "[extract] json:\n{}",
+            serde_json::to_string_pretty(&metadata)
+                .unwrap_or_else(|_| "<json pretty print failed>".to_string())
+        ),
+    );
+
+    Ok(metadata)
+}
+
+fn rust_download_direct(
+    candidate: &RustDownloadCandidate,
+    output_path: &Path,
+    log_path: &Path,
+) -> Result<()> {
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .build()
+        .context("HTTPクライアントの作成に失敗しました")?;
+
+    let mut request = client.get(&candidate.media_url);
+    for (key, value) in &candidate.headers {
+        request = request.header(key, value);
+    }
+
+    append_log(
+        log_path,
+        &format!("[download] url: {}", candidate.media_url),
+    );
+    append_log(
+        log_path,
+        &format!("[download] protocol: {}", candidate.protocol),
+    );
+    append_log(
+        log_path,
+        &format!("[download] output: {}", output_path.display()),
+    );
+    append_log(
+        log_path,
+        &format!("[download] headers_from_extract: {:?}", candidate.headers),
+    );
+
+    let mut response = request
+        .send()
+        .context("Rustダウンロード要求に失敗しました")?;
+    append_log(
+        log_path,
+        &format!("[download] status: {}", response.status()),
+    );
+    append_log(
+        log_path,
+        &format!("[download] response_headers: {:?}", response.headers()),
+    );
+
+    if !response.status().is_success() {
+        bail!("HTTPステータスが異常です: {}", response.status());
+    }
+
+    let mut file = fs::File::create(output_path)
+        .with_context(|| format!("出力ファイル作成に失敗しました: {}", output_path.display()))?;
+    let mut buf = [0u8; 64 * 1024];
+    let mut total_bytes: u64 = 0;
+    let mut last_reported_mb: u64 = 0;
+
+    loop {
+        let read = response
+            .read(&mut buf)
+            .context("レスポンス読み取りに失敗しました")?;
+        if read == 0 {
+            break;
+        }
+
+        file.write_all(&buf[..read])
+            .context("出力ファイル書き込みに失敗しました")?;
+        total_bytes += read as u64;
+
+        let current_mb = total_bytes / (1024 * 1024);
+        if current_mb >= last_reported_mb + 10 {
+            last_reported_mb = current_mb;
+            append_log(
+                log_path,
+                &format!("[download] progress_bytes: {}", total_bytes),
+            );
+        }
+    }
+
+    append_log(
+        log_path,
+        &format!("[download] completed_bytes: {}", total_bytes),
+    );
+    Ok(())
+}
+
+fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result<()> {
+    let log_path = new_error_log_path(url)?;
+    append_log(&log_path, "=== rust-download mode start ===");
+    append_log(&log_path, &format!("[input] url: {}", url));
+    append_log(&log_path, &format!("[config] {:?}", config));
+
+    let metadata = extract_with_ytdlp(ytdlp_path, url, config, &log_path)
+        .with_context(|| format!("抽出処理に失敗しました。ログ: {}", log_path.display()))?;
+    let candidate = extract_candidate_from_json(&metadata, config)
+        .with_context(|| format!("抽出結果の解釈に失敗しました。ログ: {}", log_path.display()))?;
+
+    fs::create_dir_all(&config.output_dir).context("出力ディレクトリの作成に失敗しました")?;
+    let file_name = format!("{}.{}", candidate.title, candidate.ext);
+    let output_path = PathBuf::from(&config.output_dir).join(file_name);
+
+    if !config.quiet {
+        println!("Rust download mode: {}", output_path.display());
+        println!("詳細ログ: {}", log_path.display());
+    }
+
+    rust_download_direct(&candidate, &output_path, &log_path).with_context(|| {
+        format!(
+            "Rustダウンロード失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
+            log_path.display()
+        )
+    })?;
+
+    append_log(&log_path, "=== rust-download mode done ===");
+
+    if !config.quiet {
+        println!("\n✓ Rustダウンロードが完了しました。\n");
+    }
+
+    Ok(())
+}
+
 /// URLをダウンロード
 fn download_url(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result<()> {
     if url.trim().is_empty() {
@@ -666,6 +1006,11 @@ fn download_single(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Res
     if !config.quiet {
         println!("=== 単一URLモード ===\n");
     }
+
+    if config.rust_download {
+        return download_single_rust(ytdlp_path, url, config);
+    }
+
     download_url(ytdlp_path, url, config)
 }
 
@@ -807,6 +1152,14 @@ fn main() -> Result<()> {
 
     if cli.update && cli.update_ytdlp {
         bail!("--update と --update-ytdlp は同時に指定できません");
+    }
+
+    if cli.rust_download {
+        if cli.urls.is_some() || cli.url.is_none() {
+            bail!(
+                "--rust-download は --url の単一モード専用です（切り分け目的のためフォールバックなし）。ハング/失敗時は --rust-download を外してください"
+            );
+        }
     }
 
     // クレジット表示モード
