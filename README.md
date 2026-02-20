@@ -9,15 +9,15 @@ A video downloader rewritten in Rust from the Python `downloader.py`. Downloads 
 - 🚀 **Automatic yt-dlp Download**: Automatically downloads yt-dlp from GitHub Releases to `./binaries/` if not installed on the system
 - 🎯 **Platform Auto-Detection**: Automatically detects Twitch, YouTube, Twitter/X from URLs and uses optimal settings
 - 🔄 **3 Operating Modes**: Interactive loop mode, single URL mode, and batch mode
-- ⚙️ **Detailed Customization**: 11 options including output directory, quality, format, and audio extraction
-- 🍪 **Chrome Cookie Support**: Uses Chrome cookies by default (v1.2.0+)
+- ⚙️ **Detailed Customization**: output directory, quality, format, audio extraction, subtitle options, and more
+- 🍪 **Cookie Support**: Browser cookie authentication support
 - 📦 **Single Executable**: Runs as a single compiled Rust executable
 - ⚡ **Fast & Lightweight**: High performance with Rust
 
 ## Supported Platforms
 
 - **YouTube** (youtube.com, youtu.be)
-  - Chrome cookie authentication (default, v1.2.0+)
+  - Chrome cookie authentication
   - Best quality (bestvideo+bestaudio)
   - Thumbnail & metadata embedding
   - Processed as access from Japan
@@ -31,8 +31,8 @@ A video downloader rewritten in Rust from the Python `downloader.py`. Downloads 
   - Thumbnail & metadata embedding
 
 - **Other Sites**
-  - Supported with generic settings
-  - Subtitle download (SRT format)
+  - Best quality priority (`bv*+ba/b`)
+  - Subtitle download only when explicitly requested via options
   - Chrome cookie authentication (default)
 
 ## Installation
@@ -99,121 +99,9 @@ Download multiple URLs at once.
 .\target\release\downloader.exe --help
 ```
 
-## v1.2.0 New Features
+## Changelog
 
-### Advanced Options
-
-#### Output Directory Specification (`-o` / `--output-dir`)
-
-```bash
-# Save to downloads folder
-.\target\release\downloader.exe --url "..." -o "./downloads"
-
-# Save to dedicated music folder
-.\target\release\downloader.exe -o "./music" -a --url "..."
-```
-
-#### Audio Only Download (`-a` / `--audio-only`)
-
-Download audio only in mp3 format.
-
-```bash
-.\target\release\downloader.exe --url "..." --audio-only
-# Or short form
-.\target\release\downloader.exe --url "..." -a
-```
-
-#### Quality Specification (`--quality`)
-
-Download with specified resolution.
-
-```bash
-# Download in 720p
-.\target\release\downloader.exe --url "..." --quality 720p
-
-# Available qualities: best (default), 1080p, 720p, 480p, 360p
-```
-
-#### Output Format Specification (`-f` / `--format`)
-
-```bash
-# Save in MKV format
-.\target\release\downloader.exe --url "..." -f mkv
-
-# Available formats: mp4 (default), mkv, webm
-```
-
-#### Skip Metadata (`--no-metadata`)
-
-Skip thumbnail and metadata embedding for faster processing.
-
-```bash
-.\target\release\downloader.exe --url "..." --no-metadata
-```
-
-#### Cookie Browser Specification (`--cookies`)
-
-**Default changed to Chrome in v1.2.0.**
-
-```bash
-# Use Firefox cookies
-.\target\release\downloader.exe --url "..." --cookies firefox
-
-# Supported browsers: chrome (default), firefox, edge, safari
-```
-
-#### Playlist Download (`--playlist`)
-
-Download entire playlist (default is single video).
-
-```bash
-.\target\release\downloader.exe --url "..." --playlist
-```
-
-#### yt-dlp Update (`--update-ytdlp`)
-
-Update yt-dlp to the latest version.
-
-```bash
-.\target\release\downloader.exe --update-ytdlp
-```
-
-#### Verbose Logging (`-v` / `--verbose`)
-
-Output detailed logs for debugging.
-
-```bash
-.\target\release\downloader.exe --url "..." -v
-```
-
-#### Quiet Mode (`-q` / `--quiet`)
-
-Display minimal output only.
-
-```bash
-.\target\release\downloader.exe --url "..." -q
-```
-
-#### Credits Display (`--credit`)
-
-Display developer information and credits.
-
-```bash
-.\target\release\downloader.exe --credit
-```
-
-### Combined Usage Examples
-
-```bash
-# Audio only, Firefox cookies, specify output directory
-.\target\release\downloader.exe --url "..." -a --cookies firefox -o "./music"
-
-# 720p, quiet mode, no metadata
-.\target\release\downloader.exe --url "..." --quality 720p -q --no-metadata
-
-# Playlist, verbose logging, MKV format
-.\target\release\downloader.exe --url "..." --playlist -v -f mkv
-```
+Release notes are maintained in [Changelog.md](./Changelog.md).
 
 ## About yt-dlp
 

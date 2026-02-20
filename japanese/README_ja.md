@@ -9,15 +9,15 @@ Pythonの`downloader.py`をRustで書き直した動画ダウンローダーで�
 - 🚀 **自動yt-dlpダウンロード**: yt-dlpがシステムにインストールされていない場合、自動的にGitHub Releasesからダウンロードして`./binaries/`に保存します
 - 🎯 **プラットフォーム自動検出**: URL から Twitch、YouTube、Twitter/X を自動検出し、最適な設定でダウンロード
 - 🔄 **3つの動作モード**: 対話的ループモード、単一URLモード、バッチモード
-- ⚙️ **詳細なカスタマイズ**: 出力先、画質、フォーマット、音声抽出など11種類のオプション
-- 🍪 **Chromeクッキー対応**: デフォルトでChromeのクッキーを使用（v1.2.0~）
+- ⚙️ **詳細なカスタマイズ**: 出力先、画質、フォーマット、音声抽出、字幕指定などのオプション
+- 🍪 **クッキー対応**: ブラウザクッキー認証に対応
 - 📦 **単一実行ファイル**: Rustでコンパイルされた実行ファイル1つで動作
 - ⚡ **高速・軽量**: Rustの高パフォーマンス
 
 ## サポートプラットフォーム
 
 - **YouTube** (youtube.com, youtu.be)
-  - Chromeクッキー認証（デフォルト、v1.2.0~）
+  - Chromeクッキー認証
   - 最高画質 (bestvideo+bestaudio)
   - サムネイル・メタデータ埋め込み
   - 日本からのアクセスとして処理
@@ -32,7 +32,8 @@ Pythonの`downloader.py`をRustで書き直した動画ダウンローダーで�
 
 - **その他のサイト**
   - 汎用設定で対応
-  - 字幕ダウンロード (SRT形式)
+  - 最高画質優先 (`bv*+ba/b`)
+  - 字幕はオプション指定時のみダウンロード
   - Chromeクッキー認証（デフォルト）
 
 ## インストール
@@ -99,121 +100,9 @@ URL> exit  # または quit、Ctrl+C で終了
 .\target\release\downloader.exe --help
 ```
 
-## v1.2.0の新機能
+## Changelog
 
-### 高度なオプション
-
-#### 出力ディレクトリ指定 (`-o` / `--output-dir`)
-
-```bash
-# downloadsフォルダに保存
-.\target\release\downloader.exe --url "..." -o "./downloads"
-
-# 音楽専用フォルダに保存
-.\target\release\downloader.exe -o "./music" -a --url "..."
-```
-
-#### 音声のみダウンロード (`-a` / `--audio-only`)
-
-音声のみをmp3形式でダウンロードします。
-
-```bash
-.\target\release\downloader.exe --url "..." --audio-only
-# または短縮形
-.\target\release\downloader.exe --url "..." -a
-```
-
-#### 画質指定 (`--quality`)
-
-解像度を指定してダウンロードします。
-
-```bash
-# 720pでダウンロード
-.\target\release\downloader.exe --url "..." --quality 720p
-
-# 利用可能な画質: best (デフォルト), 1080p, 720p, 480p, 360p
-```
-
-#### 出力フォーマット指定 (`-f` / `--format`)
-
-```bash
-# MKV形式で保存
-.\target\release\downloader.exe --url "..." -f mkv
-
-# 利用可能な形式: mp4 (デフォルト), mkv, webm
-```
-
-#### メタデータスキップ (`--no-metadata`)
-
-サムネイルとメタデータの埋め込みをスキップして高速化します。
-
-```bash
-.\target\release\downloader.exe --url "..." --no-metadata
-```
-
-#### クッキーブラウザ指定 (`--cookies`)
-
-**v1.2.0からデフォルトがChromeに変更されました。**
-
-```bash
-# Firefoxのクッキーを使用
-.\target\release\downloader.exe --url "..." --cookies firefox
-
-# 対応ブラウザ: chrome (デフォルト), firefox, edge, safari
-```
-
-#### プレイリストダウンロード (`--playlist`)
-
-プレイリスト全体をダウンロードします（デフォルトは単一動画）。
-
-```bash
-.\target\release\downloader.exe --url "..." --playlist
-```
-
-#### yt-dlp更新 (`--update-ytdlp`)
-
-yt-dlpを最新バージョンに更新します。
-
-```bash
-.\target\release\downloader.exe --update-ytdlp
-```
-
-#### 詳細ログ (`-v` / `--verbose`)
-
-詳細なログを出力してデバッグします。
-
-```bash
-.\target\release\downloader.exe --url "..." -v
-```
-
-#### 静寂モード (`-q` / `--quiet`)
-
-最小限の出力のみ表示します。
-
-```bash
-.\target\release\downloader.exe --url "..." -q
-```
-
-#### クレジット表示 (`--credit`)
-
-開発者情報とクレジットを表示します。
-
-```bash
-.\target\release\downloader.exe --credit
-```
-
-### 複合使用例
-
-```bash
-# 音声のみ、Firefoxクッキー、出力先指定
-.\target\release\downloader.exe --url "..." -a --cookies firefox -o "./music"
-
-# 720p、静寂モード、メタデータなし
-.\target\release\downloader.exe --url "..." --quality 720p -q --no-metadata
-
-# プレイリスト、詳細ログ、MKV形式
-.\target\release\downloader.exe --url "..." --playlist -v -f mkv
-```
+リリースノートは [Changelog.md](../Changelog.md) に集約しています。
 
 ## yt-dlpについて
 

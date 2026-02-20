@@ -8,7 +8,7 @@ use std::process::Command;
 /// yt-dlpを使用した動画ダウンローダー
 #[derive(Parser)]
 #[command(name = "downloader")]
-#[command(version = "1.2.0")]
+#[command(version = "1.3.0")]
 #[command(about = "yt-dlpを使用した動画ダウンローダー", long_about = None)]
 struct Cli {
     /// 単一URLをダウンロードして終了
@@ -48,6 +48,22 @@ struct Cli {
     #[arg(long)]
     playlist: bool,
 
+    /// 字幕をダウンロード
+    #[arg(long)]
+    write_sub: bool,
+
+    /// 字幕言語 (例: ja,en,all)
+    #[arg(long)]
+    sub_lang: Option<String>,
+
+    /// 字幕フォーマット (例: srt,vtt,best)
+    #[arg(long)]
+    sub_format: Option<String>,
+
+    /// 字幕変換フォーマット (例: srt,vtt)
+    #[arg(long)]
+    convert_subs: Option<String>,
+
     /// yt-dlpを最新バージョンに更新
     #[arg(long)]
     update_ytdlp: bool,
@@ -75,6 +91,10 @@ struct DownloadConfig {
     no_metadata: bool,
     cookies: Option<String>,
     playlist: bool,
+    write_sub: bool,
+    sub_lang: Option<String>,
+    sub_format: Option<String>,
+    convert_subs: Option<String>,
     verbose: bool,
     quiet: bool,
 }
@@ -89,6 +109,10 @@ impl DownloadConfig {
             no_metadata: cli.no_metadata,
             cookies: cli.cookies.clone(),
             playlist: cli.playlist,
+            write_sub: cli.write_sub,
+            sub_lang: cli.sub_lang.clone(),
+            sub_format: cli.sub_format.clone(),
+            convert_subs: cli.convert_subs.clone(),
             verbose: cli.verbose,
             quiet: cli.quiet,
         }
@@ -98,7 +122,7 @@ impl DownloadConfig {
 /// クレジット情報を表示
 fn show_credits() {
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║                 Video Downloader v1.2.0                      ║");
+    println!("║                 Video Downloader v1.3.0                      ║");
     println!("╠══════════════════════════════════════════════════════════════╣");
     println!("║  A Rust-based video downloader powered by yt-dlp             ║");
     println!("║                                                              ║");
@@ -109,6 +133,7 @@ fn show_credits() {
     println!("║  Rust rewrite: v1.0.0 - Complete rewrite in Rust             ║");
     println!("║                v1.1.0 - CLI enhancements                     ║");
     println!("║                v1.2.0 - Advanced options                     ║");
+    println!("║                v1.3.0 - Changelog migration                  ║");
     println!("║                                                              ║");
     println!("║  Powered by:                                                 ║");
     println!("║    • yt-dlp (https://github.com/yt-dlp/yt-dlp)               ║");
@@ -281,7 +306,8 @@ fn build_command(
         match platform {
             Platform::Twitch => "1080p60+bestaudio",
             Platform::YouTube => "bestvideo+bestaudio",
-            _ => "bestvideo+bestaudio/best",
+            Platform::Twitter => "bestvideo+bestaudio/best",
+            Platform::Generic => "bv*+ba/b",
         }
     };
 
@@ -312,15 +338,23 @@ fn build_command(
             cmd.args(["--geo-bypass-country", "JP"]);
             cmd.arg("--user-agent");
             cmd.arg("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.74 Safari/537.36");
-            cmd.args([
-                "--write-sub",
-                "--sub-lang",
-                "all",
-                "--sub-format",
-                "best",
-                "--convert-subs",
-                "srt",
-            ]);
+
+            if config.write_sub {
+                cmd.arg("--write-sub");
+
+                if let Some(sub_lang) = &config.sub_lang {
+                    cmd.args(["--sub-lang", sub_lang]);
+                }
+
+                if let Some(sub_format) = &config.sub_format {
+                    cmd.args(["--sub-format", sub_format]);
+                }
+
+                if let Some(convert_subs) = &config.convert_subs {
+                    cmd.args(["--convert-subs", convert_subs]);
+                }
+            }
+
             cmd.arg("--ignore-errors");
         }
         _ => {}
@@ -480,7 +514,7 @@ fn main() -> Result<()> {
     }
 
     if !cli.quiet {
-        println!("=== yt-dlp Video Downloader v1.2.0 ===\n");
+        println!("=== yt-dlp Video Downloader v1.3.0 ===\n");
     }
 
     // yt-dlpの確保
