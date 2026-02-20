@@ -100,6 +100,16 @@ URL> exit  # または quit、Ctrl+C で終了
 .\target\release\downloader.exe --help
 ```
 
+### バイナリ自己更新 (`-u` / `--update`)
+
+downloader本体をGitHub Releasesの最新バイナリへ更新します。
+
+```bash
+.\target\release\downloader.exe -u
+# または
+.\target\release\downloader.exe --update
+```
+
 ## Changelog
 
 リリースノートは [Changelog.md](../Changelog.md) に集約しています。

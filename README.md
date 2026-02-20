@@ -99,6 +99,16 @@ Download multiple URLs at once.
 .\target\release\downloader.exe --help
 ```
 
+### Binary Self-Update (`-u` / `--update`)
+
+Update the downloader itself to the latest GitHub Release binary.
+
+```bash
+.\target\release\downloader.exe -u
+# or
+.\target\release\downloader.exe --update
+```
+
 ## Changelog
 
 Release notes are maintained in [Changelog.md](./Changelog.md).
