@@ -101,6 +101,19 @@ Download one URL and exit.
 .\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..."
 ```
 
+### Experimental: Rust Download Mode (`--rust-download`)
+
+Use yt-dlp for extraction only, then perform the actual file download in Rust.
+
+```bash
+.\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download
+```
+
+- `--rust-download` is available only with `--url` (single URL mode)
+- No automatic fallback to regular yt-dlp download in this mode
+- If it hangs or fails, rerun without `--rust-download`
+- Detailed logs are written to `%USERPROFILE%/downloader/errorlog/*.log`
+
 ### Mode 3: Batch Mode
 
 Download multiple URLs at once.
