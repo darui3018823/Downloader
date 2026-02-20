@@ -698,13 +698,28 @@ fn execute_download_command(mut cmd: Command, suppress_ytdlp_output: bool) -> Re
     }
 }
 
-#[derive(Debug)]
-struct RustDownloadCandidate {
+#[derive(Debug, Clone)]
+struct RustMediaStream {
     media_url: String,
-    title: String,
     ext: String,
     protocol: String,
     headers: Vec<(String, String)>,
+    format_id: Option<String>,
+    vcodec: Option<String>,
+    acodec: Option<String>,
+    has_video: bool,
+    has_audio: bool,
+    has_fragments: bool,
+    score: f64,
+}
+
+#[derive(Debug)]
+struct RustDownloadCandidate {
+    title: String,
+    output_ext: String,
+    single_stream: Option<RustMediaStream>,
+    video_stream: Option<RustMediaStream>,
+    audio_stream: Option<RustMediaStream>,
 }
 
 fn is_stream_protocol(protocol: &str) -> bool {
@@ -715,131 +730,94 @@ fn is_stream_protocol(protocol: &str) -> bool {
         || lower.contains("fragment")
 }
 
-fn pick_direct_format<'a>(formats: &'a [Value], audio_only: bool) -> Option<&'a Value> {
-    let mut best: Option<(&Value, f64)> = None;
+fn stream_from_value(value: &Value) -> Option<RustMediaStream> {
+    let media_url = value.get("url")?.as_str()?.to_string();
+    if media_url.is_empty() {
+        return None;
+    }
 
-    for entry in formats {
-        let media_url = entry.get("url").and_then(Value::as_str).unwrap_or("");
-        if media_url.is_empty() {
-            continue;
-        }
+    let protocol = value
+        .get("protocol")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let has_fragments = value
+        .get("fragments")
+        .and_then(Value::as_array)
+        .map(|arr| !arr.is_empty())
+        .unwrap_or(false);
 
-        let protocol = entry
-            .get("protocol")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        let has_fragments = entry
-            .get("fragments")
-            .and_then(Value::as_array)
-            .map(|arr| !arr.is_empty())
-            .unwrap_or(false);
-        if has_fragments || is_stream_protocol(protocol) {
-            continue;
-        }
+    let vcodec = value
+        .get("vcodec")
+        .and_then(Value::as_str)
+        .map(|s| s.to_string());
+    let acodec = value
+        .get("acodec")
+        .and_then(Value::as_str)
+        .map(|s| s.to_string());
 
-        let acodec = entry
-            .get("acodec")
-            .and_then(Value::as_str)
-            .unwrap_or("none");
-        let vcodec = entry
-            .get("vcodec")
-            .and_then(Value::as_str)
-            .unwrap_or("none");
-        let has_audio = acodec != "none";
-        let has_video = vcodec != "none";
-        let tbr = entry.get("tbr").and_then(Value::as_f64).unwrap_or(0.0);
+    let has_video = vcodec.as_deref().unwrap_or("none") != "none";
+    let has_audio = acodec.as_deref().unwrap_or("none") != "none";
 
-        let score = if audio_only {
-            if has_audio && !has_video {
-                10_000.0 + tbr
-            } else if has_audio {
-                5_000.0 + tbr
-            } else {
-                continue;
+    let ext = value
+        .get("ext")
+        .and_then(Value::as_str)
+        .unwrap_or("bin")
+        .to_string();
+    let format_id = value
+        .get("format_id")
+        .and_then(Value::as_str)
+        .map(|s| s.to_string());
+
+    let mut headers = Vec::new();
+    if let Some(map) = value.get("http_headers").and_then(Value::as_object) {
+        for (key, val) in map {
+            if let Some(text) = val.as_str() {
+                headers.push((key.clone(), text.to_string()));
             }
-        } else if has_audio && has_video {
-            10_000.0 + tbr
-        } else if has_video || has_audio {
-            5_000.0 + tbr
-        } else {
-            continue;
-        };
-
-        match best {
-            Some((_, best_score)) if score <= best_score => {}
-            _ => best = Some((entry, score)),
         }
     }
 
-    best.map(|(entry, _)| entry)
+    let score = value
+        .get("tbr")
+        .and_then(Value::as_f64)
+        .or_else(|| value.get("abr").and_then(Value::as_f64))
+        .or_else(|| value.get("vbr").and_then(Value::as_f64))
+        .unwrap_or(0.0);
+
+    Some(RustMediaStream {
+        media_url,
+        ext,
+        protocol,
+        headers,
+        format_id,
+        vcodec,
+        acodec,
+        has_video,
+        has_audio,
+        has_fragments,
+        score,
+    })
+}
+
+fn is_usable_stream(stream: &RustMediaStream) -> bool {
+    !stream.media_url.is_empty() && !stream.has_fragments && !is_stream_protocol(&stream.protocol)
+}
+
+fn best_stream<'a, F>(streams: &'a [RustMediaStream], predicate: F) -> Option<&'a RustMediaStream>
+where
+    F: Fn(&RustMediaStream) -> bool,
+{
+    streams
+        .iter()
+        .filter(|s| predicate(s))
+        .max_by(|a, b| a.score.total_cmp(&b.score))
 }
 
 fn extract_candidate_from_json(
     metadata: &Value,
     config: &DownloadConfig,
 ) -> Result<RustDownloadCandidate> {
-    let requested = metadata
-        .get("requested_downloads")
-        .and_then(Value::as_array)
-        .and_then(|arr| arr.first());
-
-    let selected_format = if let Some(requested_formats) =
-        metadata.get("requested_formats").and_then(Value::as_array)
-    {
-        pick_direct_format(requested_formats, config.audio_only)
-    } else {
-        metadata
-            .get("formats")
-            .and_then(Value::as_array)
-            .and_then(|formats| pick_direct_format(formats, config.audio_only))
-    };
-
-    let media_url = requested
-        .and_then(|v| v.get("url"))
-        .and_then(Value::as_str)
-        .or_else(|| {
-            selected_format
-                .and_then(|v| v.get("url"))
-                .and_then(Value::as_str)
-        })
-        .or_else(|| metadata.get("url").and_then(Value::as_str))
-        .context("抽出JSONに直リンクURLがありません")?
-        .to_string();
-
-    let protocol = requested
-        .and_then(|v| v.get("protocol"))
-        .and_then(Value::as_str)
-        .or_else(|| {
-            selected_format
-                .and_then(|v| v.get("protocol"))
-                .and_then(Value::as_str)
-        })
-        .or_else(|| metadata.get("protocol").and_then(Value::as_str))
-        .unwrap_or("unknown")
-        .to_string();
-
-    let has_fragments = requested
-        .and_then(|v| v.get("fragments"))
-        .and_then(Value::as_array)
-        .map(|arr| !arr.is_empty())
-        .unwrap_or(false)
-        || selected_format
-            .and_then(|v| v.get("fragments"))
-            .and_then(Value::as_array)
-            .map(|arr| !arr.is_empty())
-            .unwrap_or(false)
-        || metadata
-            .get("fragments")
-            .and_then(Value::as_array)
-            .map(|arr| !arr.is_empty())
-            .unwrap_or(false);
-
-    if has_fragments || is_stream_protocol(&protocol) {
-        bail!(
-            "このURLは分割/ストリーミング形式のためRust単体DL対象外です。ハングや失敗時は --rust-download を外して実行してください"
-        );
-    }
-
     let title = metadata
         .get("title")
         .and_then(Value::as_str)
@@ -853,38 +831,85 @@ fn extract_candidate_from_json(
                 .unwrap_or_else(|| "download".to_string())
         });
 
-    let ext = requested
-        .and_then(|v| v.get("ext"))
-        .and_then(Value::as_str)
-        .or_else(|| {
-            selected_format
-                .and_then(|v| v.get("ext"))
-                .and_then(Value::as_str)
-        })
-        .or_else(|| metadata.get("ext").and_then(Value::as_str))
-        .unwrap_or(&config.format)
-        .to_string();
+    let mut streams = Vec::new();
 
-    let header_source = requested
-        .and_then(|v| v.get("http_headers"))
-        .or_else(|| selected_format.and_then(|v| v.get("http_headers")))
-        .or_else(|| metadata.get("http_headers"));
-
-    let mut headers = Vec::new();
-    if let Some(map) = header_source.and_then(Value::as_object) {
-        for (key, value) in map {
-            if let Some(text) = value.as_str() {
-                headers.push((key.clone(), text.to_string()));
+    if let Some(requested_formats) = metadata.get("requested_formats").and_then(Value::as_array) {
+        for value in requested_formats {
+            if let Some(stream) = stream_from_value(value) {
+                streams.push(stream);
             }
         }
     }
 
+    if streams.is_empty() {
+        if let Some(formats) = metadata.get("formats").and_then(Value::as_array) {
+            for value in formats {
+                if let Some(stream) = stream_from_value(value) {
+                    streams.push(stream);
+                }
+            }
+        }
+    }
+
+    if streams.is_empty() {
+        if let Some(single) = stream_from_value(metadata) {
+            streams.push(single);
+        }
+    }
+
+    if streams.is_empty() {
+        bail!("抽出JSONに直リンクURLがありません");
+    }
+
+    if config.audio_only {
+        let selected = best_stream(&streams, |s| {
+            is_usable_stream(s) && s.has_audio && !s.has_video
+        })
+        .or_else(|| best_stream(&streams, |s| is_usable_stream(s) && s.has_audio))
+        .cloned()
+        .context("Rust audio-onlyモードで利用可能な音声ストリームが見つかりません")?;
+
+        return Ok(RustDownloadCandidate {
+            title,
+            output_ext: selected.ext.clone(),
+            single_stream: Some(selected),
+            video_stream: None,
+            audio_stream: None,
+        });
+    }
+
+    let video_stream = best_stream(&streams, |s| {
+        is_usable_stream(s) && s.has_video && !s.has_audio
+    })
+    .cloned();
+    let audio_stream = best_stream(&streams, |s| {
+        is_usable_stream(s) && s.has_audio && !s.has_video
+    })
+    .cloned();
+
+    if let (Some(video), Some(audio)) = (video_stream, audio_stream) {
+        return Ok(RustDownloadCandidate {
+            title,
+            output_ext: config.format.clone(),
+            single_stream: None,
+            video_stream: Some(video),
+            audio_stream: Some(audio),
+        });
+    }
+
+    let single_stream = best_stream(&streams, |s| {
+        is_usable_stream(s) && s.has_video && s.has_audio
+    })
+    .or_else(|| best_stream(&streams, is_usable_stream))
+    .cloned()
+    .context("Rustモードで利用可能な単一ストリームが見つかりません")?;
+
     Ok(RustDownloadCandidate {
-        media_url,
         title,
-        ext,
-        protocol,
-        headers,
+        output_ext: single_stream.ext.clone(),
+        single_stream: Some(single_stream),
+        video_stream: None,
+        audio_stream: None,
     })
 }
 
@@ -948,8 +973,8 @@ fn extract_with_ytdlp(
     Ok(metadata)
 }
 
-fn rust_download_direct(
-    candidate: &RustDownloadCandidate,
+fn rust_download_stream(
+    stream: &RustMediaStream,
     output_path: &Path,
     log_path: &Path,
 ) -> Result<()> {
@@ -958,18 +983,21 @@ fn rust_download_direct(
         .build()
         .context("HTTPクライアントの作成に失敗しました")?;
 
-    let mut request = client.get(&candidate.media_url);
-    for (key, value) in &candidate.headers {
+    let mut request = client.get(&stream.media_url);
+    for (key, value) in &stream.headers {
         request = request.header(key, value);
     }
 
     append_log(
         log_path,
-        &format!("[download] url: {}", candidate.media_url),
+        &format!("[download] format_id: {:?}", stream.format_id),
     );
+    append_log(log_path, &format!("[download] vcodec: {:?}", stream.vcodec));
+    append_log(log_path, &format!("[download] acodec: {:?}", stream.acodec));
+    append_log(log_path, &format!("[download] url: {}", stream.media_url));
     append_log(
         log_path,
-        &format!("[download] protocol: {}", candidate.protocol),
+        &format!("[download] protocol: {}", stream.protocol),
     );
     append_log(
         log_path,
@@ -977,7 +1005,7 @@ fn rust_download_direct(
     );
     append_log(
         log_path,
-        &format!("[download] headers_from_extract: {:?}", candidate.headers),
+        &format!("[download] headers_from_extract: {:?}", stream.headers),
     );
 
     let mut response = request
@@ -1031,6 +1059,49 @@ fn rust_download_direct(
     Ok(())
 }
 
+fn ffmpeg_merge_streams(
+    video_path: &Path,
+    audio_path: &Path,
+    output_path: &Path,
+    log_path: &Path,
+) -> Result<()> {
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args([
+        "-hide_banner",
+        "-y",
+        "-i",
+        &video_path.to_string_lossy(),
+        "-i",
+        &audio_path.to_string_lossy(),
+        "-c",
+        "copy",
+        &output_path.to_string_lossy(),
+    ]);
+
+    append_log(log_path, &format!("[ffmpeg] command: {:?}", cmd));
+    let output = cmd.output().context("ffmpeg結合の実行に失敗しました")?;
+    append_log(
+        log_path,
+        &format!("[ffmpeg] exit: {:?}", output.status.code()),
+    );
+    append_log(
+        log_path,
+        &format!(
+            "[ffmpeg] stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    );
+
+    if !output.status.success() {
+        bail!(
+            "ffmpeg結合に失敗しました (code: {:?})",
+            output.status.code()
+        );
+    }
+
+    Ok(())
+}
+
 fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result<()> {
     let log_path = new_error_log_path(url)?;
     append_log(&log_path, "=== rust-download mode start ===");
@@ -1043,7 +1114,7 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
         .with_context(|| format!("抽出結果の解釈に失敗しました。ログ: {}", log_path.display()))?;
 
     fs::create_dir_all(&config.output_dir).context("出力ディレクトリの作成に失敗しました")?;
-    let file_name = format!("{}.{}", candidate.title, candidate.ext);
+    let file_name = format!("{}.{}", candidate.title, candidate.output_ext);
     let output_path = PathBuf::from(&config.output_dir).join(file_name);
 
     if !config.quiet {
@@ -1051,12 +1122,49 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
         println!("詳細ログ: {}", log_path.display());
     }
 
-    rust_download_direct(&candidate, &output_path, &log_path).with_context(|| {
-        format!(
-            "Rustダウンロード失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
-            log_path.display()
-        )
-    })?;
+    if let Some(single_stream) = &candidate.single_stream {
+        rust_download_stream(single_stream, &output_path, &log_path).with_context(|| {
+            format!(
+                "Rustダウンロード失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
+                log_path.display()
+            )
+        })?;
+    } else if let (Some(video_stream), Some(audio_stream)) =
+        (&candidate.video_stream, &candidate.audio_stream)
+    {
+        let temp_video = output_path.with_extension("video.tmp");
+        let temp_audio = output_path.with_extension("audio.tmp");
+
+        rust_download_stream(video_stream, &temp_video, &log_path).with_context(|| {
+            format!(
+                "動画ストリームDL失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
+                log_path.display()
+            )
+        })?;
+
+        rust_download_stream(audio_stream, &temp_audio, &log_path).with_context(|| {
+            format!(
+                "音声ストリームDL失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
+                log_path.display()
+            )
+        })?;
+
+        ffmpeg_merge_streams(&temp_video, &temp_audio, &output_path, &log_path).with_context(
+            || {
+                format!(
+                    "ffmpeg結合失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
+                    log_path.display()
+                )
+            },
+        )?;
+
+        let _ = fs::remove_file(&temp_video);
+        let _ = fs::remove_file(&temp_audio);
+    } else {
+        bail!(
+            "Rustダウンロード候補の解釈に失敗しました。ハング/失敗時は --rust-download を外してください"
+        );
+    }
 
     append_log(&log_path, "=== rust-download mode done ===");
 
