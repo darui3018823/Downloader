@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [v2-beta4] - 2026-02-21
+
+### Improved
+- Parallelized split stream downloads (video/audio) in `--rust-download` mode for better speed.
+- Added terminal flow stages and per-stream progress percentage output.
+
 ## [v2-beta3] - 2026-02-21
 
 ### Added
