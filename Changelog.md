@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.3] - 2026-02-21
+
+### Added
+- Added `-t, --threads <INT>` option for batch mode (`--urls`) to control maximum worker threads.
+
+### Changed
+- Batch mode now executes downloads in parallel threads while suppressing raw yt-dlp logs in terminal output.
+- Worker count now safely falls back to URL count when requested threads exceed the number of input URLs.
+
 ## [1.3.2] - 2026-02-21
 
 ### Added

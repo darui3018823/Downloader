@@ -5,15 +5,28 @@ use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
 use std::time::Duration;
 
 const REPO_OWNER: &str = "darui3018823";
 const REPO_NAME: &str = "Downloader";
 
+fn parse_threads(value: &str) -> std::result::Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| "--threads には1以上の整数を指定してください".to_string())?;
+
+    if parsed == 0 {
+        return Err("--threads には1以上の整数を指定してください".to_string());
+    }
+
+    Ok(parsed)
+}
+
 /// yt-dlpを使用した動画ダウンローダー
 #[derive(Parser)]
 #[command(name = "downloader")]
-#[command(version = "1.3.2")]
+#[command(version = "1.3.3")]
 #[command(about = "yt-dlpを使用した動画ダウンローダー", long_about = None)]
 struct Cli {
     /// 単一URLをダウンロードして終了
@@ -85,6 +98,10 @@ struct Cli {
     #[arg(short = 'q', long)]
     quiet: bool,
 
+    /// バッチモード時の最大スレッド数（--urls 専用）
+    #[arg(short = 't', long, value_parser = parse_threads)]
+    threads: Option<usize>,
+
     /// クレジット情報を表示
     #[arg(long)]
     credit: bool,
@@ -106,6 +123,7 @@ struct DownloadConfig {
     convert_subs: Option<String>,
     verbose: bool,
     quiet: bool,
+    threads: Option<usize>,
 }
 
 impl DownloadConfig {
@@ -124,6 +142,7 @@ impl DownloadConfig {
             convert_subs: cli.convert_subs.clone(),
             verbose: cli.verbose,
             quiet: cli.quiet,
+            threads: cli.threads,
         }
     }
 }
@@ -131,7 +150,7 @@ impl DownloadConfig {
 /// クレジット情報を表示
 fn show_credits() {
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║                 Video Downloader v1.3.2                      ║");
+    println!("║                 Video Downloader v1.3.3                      ║");
     println!("╠══════════════════════════════════════════════════════════════╣");
     println!("║  A Rust-based video downloader powered by yt-dlp             ║");
     println!("║                                                              ║");
@@ -144,6 +163,7 @@ fn show_credits() {
     println!("║                v1.2.0 - Advanced options                     ║");
     println!("║                v1.3.0 - Changelog migration                  ║");
     println!("║                v1.3.2 - Platform custom expansion            ║");
+    println!("║                v1.3.3 - Batch threading control              ║");
     println!("║                                                              ║");
     println!("║  Powered by:                                                 ║");
     println!("║    • yt-dlp (https://github.com/yt-dlp/yt-dlp)               ║");
@@ -586,6 +606,34 @@ fn build_command(
     cmd
 }
 
+fn execute_download_command(mut cmd: Command, suppress_ytdlp_output: bool) -> Result<()> {
+    if suppress_ytdlp_output {
+        let output = cmd
+            .output()
+            .context("yt-dlpの実行に失敗しました")?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            bail!(
+                "yt-dlpがエラーコード{}で終了しました",
+                output.status.code().unwrap_or(-1)
+            );
+        }
+    } else {
+        let status = cmd.status().context("yt-dlpの実行に失敗しました")?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            bail!(
+                "yt-dlpがエラーコード{}で終了しました",
+                status.code().unwrap_or(-1)
+            );
+        }
+    }
+}
+
 /// URLをダウンロード
 fn download_url(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result<()> {
     if url.trim().is_empty() {
@@ -600,23 +648,16 @@ fn download_url(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result
     }
 
     // コマンドを構築して実行
-    let mut cmd = build_command(ytdlp_path, platform, url, config);
+    let cmd = build_command(ytdlp_path, platform, url, config);
 
     if !config.quiet {
         println!("ダウンロードを開始します...\n");
     }
 
-    let status = cmd.status().context("yt-dlpの実行に失敗しました")?;
+    execute_download_command(cmd, false)?;
 
-    if status.success() {
-        if !config.quiet {
-            println!("\n✓ ダウンロードが完了しました。\n");
-        }
-    } else {
-        bail!(
-            "yt-dlpがエラーコード{}で終了しました",
-            status.code().unwrap_or(-1)
-        );
+    if !config.quiet {
+        println!("\n✓ ダウンロードが完了しました。\n");
     }
 
     Ok(())
@@ -634,22 +675,71 @@ fn download_single(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Res
 fn download_batch(ytdlp_path: &Path, urls: &[String], config: &DownloadConfig) -> Result<()> {
     if !config.quiet {
         println!("=== バッチモード ({} URLs) ===\n", urls.len());
+        println!("yt-dlpログは非表示で、スレッド並列実行します。\n");
     }
 
-    for (i, url) in urls.iter().enumerate() {
-        if !config.quiet {
-            println!("[{}/{}] ダウンロード中...", i + 1, urls.len());
+    let default_workers = thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .max(1);
+    let configured_workers = config.threads.unwrap_or(default_workers).max(1);
+    let max_workers = configured_workers.min(urls.len().max(1));
+
+    if !config.quiet {
+        println!(
+            "スレッド数: {} (指定: {}, URL数: {})\n",
+            max_workers, configured_workers, urls.len()
+        );
+    }
+
+    let mut completed = 0usize;
+    let mut failed = 0usize;
+
+    for chunk in urls.chunks(max_workers) {
+        let mut handles = Vec::with_capacity(chunk.len());
+
+        for url in chunk {
+            let ytdlp_path = ytdlp_path.to_path_buf();
+            let config = config.clone();
+            let url = url.clone();
+
+            handles.push(thread::spawn(move || {
+                if url.trim().is_empty() {
+                    return (url, Ok(()));
+                }
+
+                let platform = Platform::detect(&url);
+                let cmd = build_command(&ytdlp_path, platform, &url, &config);
+                let result = execute_download_command(cmd, true);
+                (url, result)
+            }));
         }
-        if let Err(e) = download_url(ytdlp_path, url, config) {
-            eprintln!("エラー: {}", e);
-            if !config.quiet {
-                println!("次のURLに進みます...\n");
+
+        for handle in handles {
+            match handle.join() {
+                Ok((url, Ok(()))) => {
+                    completed += 1;
+                    if !config.quiet {
+                        println!("[{}/{}] 完了: {}", completed + failed, urls.len(), url);
+                    }
+                }
+                Ok((url, Err(e))) => {
+                    failed += 1;
+                    eprintln!("エラー ({}): {}", url, e);
+                }
+                Err(_) => {
+                    failed += 1;
+                    eprintln!("エラー: ダウンロードスレッドがpanicしました");
+                }
             }
         }
     }
 
     if !config.quiet {
-        println!("すべてのダウンロードが完了しました。");
+        println!(
+            "すべてのダウンロードが完了しました。(成功: {}, 失敗: {})",
+            completed, failed
+        );
     }
     Ok(())
 }
@@ -740,7 +830,7 @@ fn main() -> Result<()> {
     }
 
     if !cli.quiet {
-        println!("=== yt-dlp Video Downloader v1.3.2 ===\n");
+        println!("=== yt-dlp Video Downloader v1.3.3 ===\n");
     }
 
     // yt-dlpの確保
