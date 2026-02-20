@@ -608,9 +608,7 @@ fn build_command(
 
 fn execute_download_command(mut cmd: Command, suppress_ytdlp_output: bool) -> Result<()> {
     if suppress_ytdlp_output {
-        let output = cmd
-            .output()
-            .context("yt-dlpの実行に失敗しました")?;
+        let output = cmd.output().context("yt-dlpの実行に失敗しました")?;
 
         if output.status.success() {
             Ok(())
@@ -688,7 +686,9 @@ fn download_batch(ytdlp_path: &Path, urls: &[String], config: &DownloadConfig) -
     if !config.quiet {
         println!(
             "スレッド数: {} (指定: {}, URL数: {})\n",
-            max_workers, configured_workers, urls.len()
+            max_workers,
+            configured_workers,
+            urls.len()
         );
     }
 
