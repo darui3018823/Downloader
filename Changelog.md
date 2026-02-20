@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.2] - 2026-02-21
+
+### Added
+- Added custom platform detection for niconico (`nicovideo.jp`, `nico.ms`), SoundCloud (`soundcloud.com`), Instagram (`instagram.com`), TikTok (`tiktok.com`), and bilibili (`bilibili.com`, `b23.tv`).
+
+### Changed
+- Added per-platform yt-dlp defaults for the newly supported platforms.
+- SoundCloud now skips `--merge-output-format` to better match audio-first downloads.
+
+### Docs
+- Updated `README.md` and `japanese/README_ja.md` platform support sections.
+
 ## [1.3.0] - 2026-02-20
 
 ### Changed

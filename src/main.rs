@@ -13,7 +13,7 @@ const REPO_NAME: &str = "Downloader";
 /// yt-dlpを使用した動画ダウンローダー
 #[derive(Parser)]
 #[command(name = "downloader")]
-#[command(version = "1.3.0")]
+#[command(version = "1.3.2")]
 #[command(about = "yt-dlpを使用した動画ダウンローダー", long_about = None)]
 struct Cli {
     /// 単一URLをダウンロードして終了
@@ -131,7 +131,7 @@ impl DownloadConfig {
 /// クレジット情報を表示
 fn show_credits() {
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║                 Video Downloader v1.3.0                      ║");
+    println!("║                 Video Downloader v1.3.2                      ║");
     println!("╠══════════════════════════════════════════════════════════════╣");
     println!("║  A Rust-based video downloader powered by yt-dlp             ║");
     println!("║                                                              ║");
@@ -143,6 +143,7 @@ fn show_credits() {
     println!("║                v1.1.0 - CLI enhancements                     ║");
     println!("║                v1.2.0 - Advanced options                     ║");
     println!("║                v1.3.0 - Changelog migration                  ║");
+    println!("║                v1.3.2 - Platform custom expansion            ║");
     println!("║                                                              ║");
     println!("║  Powered by:                                                 ║");
     println!("║    • yt-dlp (https://github.com/yt-dlp/yt-dlp)               ║");
@@ -426,17 +427,34 @@ enum Platform {
     Twitch,
     YouTube,
     Twitter,
+    Niconico,
+    SoundCloud,
+    Instagram,
+    TikTok,
+    Bilibili,
     Generic,
 }
 
 impl Platform {
     fn detect(url: &str) -> Self {
-        if url.contains("twitch.tv") {
+        let lower = url.to_ascii_lowercase();
+
+        if lower.contains("twitch.tv") {
             Platform::Twitch
-        } else if url.contains("youtube.com") || url.contains("youtu.be") {
+        } else if lower.contains("youtube.com") || lower.contains("youtu.be") {
             Platform::YouTube
-        } else if url.contains("twitter.com") || url.contains("x.com") {
+        } else if lower.contains("twitter.com") || lower.contains("x.com") {
             Platform::Twitter
+        } else if lower.contains("nicovideo.jp") || lower.contains("nico.ms") {
+            Platform::Niconico
+        } else if lower.contains("soundcloud.com") {
+            Platform::SoundCloud
+        } else if lower.contains("instagram.com") {
+            Platform::Instagram
+        } else if lower.contains("tiktok.com") {
+            Platform::TikTok
+        } else if lower.contains("bilibili.com") || lower.contains("b23.tv") {
+            Platform::Bilibili
         } else {
             Platform::Generic
         }
@@ -486,12 +504,19 @@ fn build_command(
             Platform::Twitch => "1080p60+bestaudio",
             Platform::YouTube => "bestvideo+bestaudio",
             Platform::Twitter => "bestvideo+bestaudio/best",
+            Platform::Niconico => "bestvideo+bestaudio/best",
+            Platform::SoundCloud => "bestaudio/best",
+            Platform::Instagram => "bestvideo+bestaudio/best",
+            Platform::TikTok => "bestvideo+bestaudio/best",
+            Platform::Bilibili => "bv*+ba/b",
             Platform::Generic => "bv*+ba/b",
         }
     };
 
     cmd.args(["-f", format_arg]);
-    cmd.args(["--merge-output-format", &config.format]);
+    if !matches!(platform, Platform::SoundCloud) {
+        cmd.args(["--merge-output-format", &config.format]);
+    }
 
     // メタデータ
     if !config.no_metadata {
@@ -512,6 +537,17 @@ fn build_command(
     match platform {
         Platform::YouTube => {
             cmd.args(["-4", "--geo-bypass-country", "JP"]);
+        }
+        Platform::Niconico => {
+            cmd.args(["--geo-bypass-country", "JP", "--ignore-errors"]);
+        }
+        Platform::Instagram | Platform::TikTok => {
+            cmd.arg("--user-agent");
+            cmd.arg("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.74 Safari/537.36");
+            cmd.arg("--ignore-errors");
+        }
+        Platform::Bilibili => {
+            cmd.arg("--ignore-errors");
         }
         Platform::Generic => {
             cmd.args(["--geo-bypass-country", "JP"]);
@@ -704,7 +740,7 @@ fn main() -> Result<()> {
     }
 
     if !cli.quiet {
-        println!("=== yt-dlp Video Downloader v1.3.0 ===\n");
+        println!("=== yt-dlp Video Downloader v1.3.2 ===\n");
     }
 
     // yt-dlpの確保

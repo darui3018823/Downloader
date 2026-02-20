@@ -7,7 +7,7 @@ Pythonの`downloader.py`をRustで書き直した動画ダウンローダーで�
 ## 特徴
 
 - 🚀 **自動yt-dlpダウンロード**: yt-dlpがシステムにインストールされていない場合、自動的にGitHub Releasesからダウンロードして`./binaries/`に保存します
-- 🎯 **プラットフォーム自動検出**: URL から Twitch、YouTube、Twitter/X を自動検出し、最適な設定でダウンロード
+- 🎯 **プラットフォーム自動検出**: URL から Twitch、YouTube、Twitter/X、niconico、SoundCloud、Instagram、TikTok、bilibili を自動検出し、最適な設定でダウンロード
 - 🔄 **3つの動作モード**: 対話的ループモード、単一URLモード、バッチモード
 - ⚙️ **詳細なカスタマイズ**: 出力先、画質、フォーマット、音声抽出、字幕指定などのオプション
 - 🍪 **クッキー対応**: ブラウザクッキー認証に対応
@@ -29,6 +29,22 @@ Pythonの`downloader.py`をRustで書き直した動画ダウンローダーで�
 - **Twitter/X** (twitter.com, x.com)
   - MP4形式で保存
   - サムネイル・メタデータ埋め込み
+
+- **niconico** (nicovideo.jp, nico.ms)
+  - 最高画質優先 (`bestvideo+bestaudio/best`)
+  - 日本リージョンバイパス設定
+
+- **SoundCloud** (soundcloud.com)
+  - 音声優先の画質選択 (`bestaudio/best`)
+
+- **Instagram** (instagram.com)
+  - ブラウザ相当User-Agentで最適化
+
+- **TikTok** (tiktok.com)
+  - ブラウザ相当User-Agentで最適化
+
+- **bilibili** (bilibili.com, b23.tv)
+  - 汎用高画質設定 (`bv*+ba/b`)
 
 - **その他のサイト**
   - 汎用設定で対応

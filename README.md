@@ -7,7 +7,7 @@ A video downloader rewritten in Rust from the Python `downloader.py`. Downloads 
 ## Features
 
 - 🚀 **Automatic yt-dlp Download**: Automatically downloads yt-dlp from GitHub Releases to `./binaries/` if not installed on the system
-- 🎯 **Platform Auto-Detection**: Automatically detects Twitch, YouTube, Twitter/X from URLs and uses optimal settings
+- 🎯 **Platform Auto-Detection**: Automatically detects Twitch, YouTube, Twitter/X, niconico, SoundCloud, Instagram, TikTok, bilibili from URLs and uses optimal settings
 - 🔄 **3 Operating Modes**: Interactive loop mode, single URL mode, and batch mode
 - ⚙️ **Detailed Customization**: output directory, quality, format, audio extraction, subtitle options, and more
 - 🍪 **Cookie Support**: Browser cookie authentication support
@@ -29,6 +29,22 @@ A video downloader rewritten in Rust from the Python `downloader.py`. Downloads 
 - **Twitter/X** (twitter.com, x.com)
   - Saved in MP4 format
   - Thumbnail & metadata embedding
+
+- **niconico** (nicovideo.jp, nico.ms)
+  - Best quality priority (`bestvideo+bestaudio/best`)
+  - Japan region bypass settings
+
+- **SoundCloud** (soundcloud.com)
+  - Audio-first quality selection (`bestaudio/best`)
+
+- **Instagram** (instagram.com)
+  - Generic browser User-Agent optimization
+
+- **TikTok** (tiktok.com)
+  - Generic browser User-Agent optimization
+
+- **bilibili** (bilibili.com, b23.tv)
+  - Generic high-quality setting (`bv*+ba/b`)
 
 - **Other Sites**
   - Best quality priority (`bv*+ba/b`)
