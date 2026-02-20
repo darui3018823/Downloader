@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [v2-beta2] - 2026-02-21
+
+### Fixed
+- Improved `--rust-download` extraction parsing to pick direct media URLs from `requested_formats` / `formats` when `requested_downloads` is missing.
+- Improved extraction format selection to reduce false negatives for single URL Rust download mode.
+
 ## [v2-beta1] - 2026-02-21
 
 ### Added

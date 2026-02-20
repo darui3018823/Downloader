@@ -84,7 +84,7 @@ fn append_log(log_path: &Path, message: &str) {
 /// yt-dlpを使用した動画ダウンローダー
 #[derive(Parser)]
 #[command(name = "downloader")]
-#[command(version = "2.0.0-beta.1")]
+#[command(version = "2.0.0-beta.2")]
 #[command(about = "yt-dlpを使用した動画ダウンローダー", long_about = None)]
 struct Cli {
     /// 単一URLをダウンロードして終了
@@ -214,7 +214,7 @@ impl DownloadConfig {
 /// クレジット情報を表示
 fn show_credits() {
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║                 Video Downloader v2-beta1                    ║");
+    println!("║                 Video Downloader v2-beta2                    ║");
     println!("╠══════════════════════════════════════════════════════════════╣");
     println!("║  A Rust-based video downloader powered by yt-dlp             ║");
     println!("║                                                              ║");
@@ -229,6 +229,7 @@ fn show_credits() {
     println!("║                v1.3.2 - Platform custom expansion            ║");
     println!("║                v1.3.3 - Batch threading control              ║");
     println!("║                v2-beta1 - Rust download experiment           ║");
+    println!("║                v2-beta2 - Rust extract fallback fix          ║");
     println!("║                                                              ║");
     println!("║  Powered by:                                                 ║");
     println!("║    • yt-dlp (https://github.com/yt-dlp/yt-dlp)               ║");
@@ -714,6 +715,65 @@ fn is_stream_protocol(protocol: &str) -> bool {
         || lower.contains("fragment")
 }
 
+fn pick_direct_format<'a>(formats: &'a [Value], audio_only: bool) -> Option<&'a Value> {
+    let mut best: Option<(&Value, f64)> = None;
+
+    for entry in formats {
+        let media_url = entry.get("url").and_then(Value::as_str).unwrap_or("");
+        if media_url.is_empty() {
+            continue;
+        }
+
+        let protocol = entry
+            .get("protocol")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let has_fragments = entry
+            .get("fragments")
+            .and_then(Value::as_array)
+            .map(|arr| !arr.is_empty())
+            .unwrap_or(false);
+        if has_fragments || is_stream_protocol(protocol) {
+            continue;
+        }
+
+        let acodec = entry
+            .get("acodec")
+            .and_then(Value::as_str)
+            .unwrap_or("none");
+        let vcodec = entry
+            .get("vcodec")
+            .and_then(Value::as_str)
+            .unwrap_or("none");
+        let has_audio = acodec != "none";
+        let has_video = vcodec != "none";
+        let tbr = entry.get("tbr").and_then(Value::as_f64).unwrap_or(0.0);
+
+        let score = if audio_only {
+            if has_audio && !has_video {
+                10_000.0 + tbr
+            } else if has_audio {
+                5_000.0 + tbr
+            } else {
+                continue;
+            }
+        } else if has_audio && has_video {
+            10_000.0 + tbr
+        } else if has_video || has_audio {
+            5_000.0 + tbr
+        } else {
+            continue;
+        };
+
+        match best {
+            Some((_, best_score)) if score <= best_score => {}
+            _ => best = Some((entry, score)),
+        }
+    }
+
+    best.map(|(entry, _)| entry)
+}
+
 fn extract_candidate_from_json(
     metadata: &Value,
     config: &DownloadConfig,
@@ -723,9 +783,25 @@ fn extract_candidate_from_json(
         .and_then(Value::as_array)
         .and_then(|arr| arr.first());
 
+    let selected_format = if let Some(requested_formats) =
+        metadata.get("requested_formats").and_then(Value::as_array)
+    {
+        pick_direct_format(requested_formats, config.audio_only)
+    } else {
+        metadata
+            .get("formats")
+            .and_then(Value::as_array)
+            .and_then(|formats| pick_direct_format(formats, config.audio_only))
+    };
+
     let media_url = requested
         .and_then(|v| v.get("url"))
         .and_then(Value::as_str)
+        .or_else(|| {
+            selected_format
+                .and_then(|v| v.get("url"))
+                .and_then(Value::as_str)
+        })
         .or_else(|| metadata.get("url").and_then(Value::as_str))
         .context("抽出JSONに直リンクURLがありません")?
         .to_string();
@@ -733,6 +809,11 @@ fn extract_candidate_from_json(
     let protocol = requested
         .and_then(|v| v.get("protocol"))
         .and_then(Value::as_str)
+        .or_else(|| {
+            selected_format
+                .and_then(|v| v.get("protocol"))
+                .and_then(Value::as_str)
+        })
         .or_else(|| metadata.get("protocol").and_then(Value::as_str))
         .unwrap_or("unknown")
         .to_string();
@@ -742,6 +823,11 @@ fn extract_candidate_from_json(
         .and_then(Value::as_array)
         .map(|arr| !arr.is_empty())
         .unwrap_or(false)
+        || selected_format
+            .and_then(|v| v.get("fragments"))
+            .and_then(Value::as_array)
+            .map(|arr| !arr.is_empty())
+            .unwrap_or(false)
         || metadata
             .get("fragments")
             .and_then(Value::as_array)
@@ -770,12 +856,18 @@ fn extract_candidate_from_json(
     let ext = requested
         .and_then(|v| v.get("ext"))
         .and_then(Value::as_str)
+        .or_else(|| {
+            selected_format
+                .and_then(|v| v.get("ext"))
+                .and_then(Value::as_str)
+        })
         .or_else(|| metadata.get("ext").and_then(Value::as_str))
         .unwrap_or(&config.format)
         .to_string();
 
     let header_source = requested
         .and_then(|v| v.get("http_headers"))
+        .or_else(|| selected_format.and_then(|v| v.get("http_headers")))
         .or_else(|| metadata.get("http_headers"));
 
     let mut headers = Vec::new();
@@ -807,6 +899,8 @@ fn extract_with_ytdlp(
 
     if config.audio_only {
         cmd.args(["-f", "bestaudio/best"]);
+    } else {
+        cmd.args(["-f", "best/bv*+ba/b"]);
     }
 
     if let Some(cookies) = &config.cookies {
@@ -1184,7 +1278,7 @@ fn main() -> Result<()> {
     }
 
     if !cli.quiet {
-        println!("=== yt-dlp Video Downloader v2-beta1 ===\n");
+        println!("=== yt-dlp Video Downloader v2-beta2 ===\n");
     }
 
     // yt-dlpの確保
