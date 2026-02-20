@@ -978,6 +978,8 @@ fn rust_download_stream(
     stream: &RustMediaStream,
     output_path: &Path,
     log_path: &Path,
+    progress_label: &str,
+    show_progress: bool,
 ) -> Result<()> {
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(30))
@@ -1025,11 +1027,21 @@ fn rust_download_stream(
         bail!("HTTPステータスが異常です: {}", response.status());
     }
 
+    let total_size = response.content_length();
+    if show_progress {
+        if let Some(total) = total_size {
+            println!("[{}] 開始: {} bytes", progress_label, total);
+        } else {
+            println!("[{}] 開始", progress_label);
+        }
+    }
+
     let mut file = fs::File::create(output_path)
         .with_context(|| format!("出力ファイル作成に失敗しました: {}", output_path.display()))?;
     let mut buf = [0u8; 64 * 1024];
     let mut total_bytes: u64 = 0;
     let mut last_reported_mb: u64 = 0;
+    let mut last_percent_reported: u64 = 0;
 
     loop {
         let read = response
@@ -1051,12 +1063,29 @@ fn rust_download_stream(
                 &format!("[download] progress_bytes: {}", total_bytes),
             );
         }
+
+        if show_progress {
+            if let Some(total) = total_size {
+                if total > 0 {
+                    let percent = (total_bytes.saturating_mul(100) / total).min(100);
+                    if percent >= last_percent_reported + 5 || percent == 100 {
+                        last_percent_reported = percent;
+                        println!("[{}] {}%", progress_label, percent);
+                    }
+                }
+            }
+        }
     }
 
     append_log(
         log_path,
         &format!("[download] completed_bytes: {}", total_bytes),
     );
+
+    if show_progress {
+        println!("[{}] 完了", progress_label);
+    }
+
     Ok(())
 }
 
@@ -1109,6 +1138,10 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
     append_log(&log_path, &format!("[input] url: {}", url));
     append_log(&log_path, &format!("[config] {:?}", config));
 
+    if !config.quiet {
+        println!("[flow] 1/4 抽出中...");
+    }
+
     let metadata = extract_with_ytdlp(ytdlp_path, url, config, &log_path)
         .with_context(|| format!("抽出処理に失敗しました。ログ: {}", log_path.display()))?;
     let candidate = extract_candidate_from_json(&metadata, config)
@@ -1124,7 +1157,18 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
     }
 
     if let Some(single_stream) = &candidate.single_stream {
-        rust_download_stream(single_stream, &output_path, &log_path).with_context(|| {
+        if !config.quiet {
+            println!("[flow] 2/4 単一ストリームDL中...");
+        }
+
+        rust_download_stream(
+            single_stream,
+            &output_path,
+            &log_path,
+            "single",
+            !config.quiet,
+        )
+        .with_context(|| {
             format!(
                 "Rustダウンロード失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
                 log_path.display()
@@ -1136,19 +1180,61 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
         let temp_video = output_path.with_extension("video.tmp");
         let temp_audio = output_path.with_extension("audio.tmp");
 
-        rust_download_stream(video_stream, &temp_video, &log_path).with_context(|| {
+        if !config.quiet {
+            println!("[flow] 2/4 動画/音声の並列DL中...");
+        }
+
+        let video_stream = video_stream.clone();
+        let audio_stream = audio_stream.clone();
+        let video_log = log_path.clone();
+        let audio_log = log_path.clone();
+        let video_path = temp_video.clone();
+        let audio_path = temp_audio.clone();
+        let show_progress = !config.quiet;
+
+        let video_handle = thread::spawn(move || {
+            rust_download_stream(
+                &video_stream,
+                &video_path,
+                &video_log,
+                "video",
+                show_progress,
+            )
+        });
+
+        let audio_handle = thread::spawn(move || {
+            rust_download_stream(
+                &audio_stream,
+                &audio_path,
+                &audio_log,
+                "audio",
+                show_progress,
+            )
+        });
+
+        let video_result = video_handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("動画DLスレッドがpanicしました"))?;
+        video_result.with_context(|| {
             format!(
                 "動画ストリームDL失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
                 log_path.display()
             )
         })?;
 
-        rust_download_stream(audio_stream, &temp_audio, &log_path).with_context(|| {
+        let audio_result = audio_handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("音声DLスレッドがpanicしました"))?;
+        audio_result.with_context(|| {
             format!(
                 "音声ストリームDL失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
                 log_path.display()
             )
         })?;
+
+        if !config.quiet {
+            println!("[flow] 3/4 ffmpeg結合中...");
+        }
 
         ffmpeg_merge_streams(&temp_video, &temp_audio, &output_path, &log_path).with_context(
             || {
@@ -1170,6 +1256,7 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
     append_log(&log_path, "=== rust-download mode done ===");
 
     if !config.quiet {
+        println!("[flow] 4/4 完了");
         println!("\n✓ Rustダウンロードが完了しました。\n");
     }
 
