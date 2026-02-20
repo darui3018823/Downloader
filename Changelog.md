@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [v2-beta3] - 2026-02-21
+
+### Added
+- Added split stream handling in `--rust-download` mode to download video/audio streams separately and merge with `ffmpeg -c copy`.
+
+### Improved
+- Added richer stream diagnostics (`format_id`, codec info) to error logs for investigation.
+
 ## [v2-beta2] - 2026-02-21
 
 ### Fixed
