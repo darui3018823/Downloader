@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [v2-beta1] - 2026-02-21
+
+### Added
+- Added experimental `--rust-download` mode for single URL operation.
+- Added detailed investigation logs under `%USERPROFILE%/downloader/errorlog/*.log`.
+
+### Changed
+- In `--rust-download` mode, yt-dlp is used for extraction only (`-J`) and actual download is handled by Rust.
+- No automatic fallback in this mode; rerun without `--rust-download` when hang/failure occurs.
+
 ## [1.3.3] - 2026-02-21
 
 ### Added

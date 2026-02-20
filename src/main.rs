@@ -84,7 +84,7 @@ fn append_log(log_path: &Path, message: &str) {
 /// yt-dlpを使用した動画ダウンローダー
 #[derive(Parser)]
 #[command(name = "downloader")]
-#[command(version = "1.3.3")]
+#[command(version = "2.0.0-beta.1")]
 #[command(about = "yt-dlpを使用した動画ダウンローダー", long_about = None)]
 struct Cli {
     /// 単一URLをダウンロードして終了
@@ -214,7 +214,7 @@ impl DownloadConfig {
 /// クレジット情報を表示
 fn show_credits() {
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║                 Video Downloader v1.3.3                      ║");
+    println!("║                 Video Downloader v2-beta1                    ║");
     println!("╠══════════════════════════════════════════════════════════════╣");
     println!("║  A Rust-based video downloader powered by yt-dlp             ║");
     println!("║                                                              ║");
@@ -228,6 +228,7 @@ fn show_credits() {
     println!("║                v1.3.0 - Changelog migration                  ║");
     println!("║                v1.3.2 - Platform custom expansion            ║");
     println!("║                v1.3.3 - Batch threading control              ║");
+    println!("║                v2-beta1 - Rust download experiment           ║");
     println!("║                                                              ║");
     println!("║  Powered by:                                                 ║");
     println!("║    • yt-dlp (https://github.com/yt-dlp/yt-dlp)               ║");
@@ -1183,7 +1184,7 @@ fn main() -> Result<()> {
     }
 
     if !cli.quiet {
-        println!("=== yt-dlp Video Downloader v1.3.3 ===\n");
+        println!("=== yt-dlp Video Downloader v2-beta1 ===\n");
     }
 
     // yt-dlpの確保
