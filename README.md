@@ -109,10 +109,21 @@ Use yt-dlp for extraction only, then perform the actual file download in Rust.
 .\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download
 ```
 
+High-performance stress test example:
+
+```bash
+.\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download --rust-max-perf
+```
+
 - `--rust-download` is available only with `--url` (single URL mode)
 - No automatic fallback to regular yt-dlp download in this mode
 - If it hangs or fails, rerun without `--rust-download`
 - Detailed logs are written to `%USERPROFILE%/downloader/errorlog/*.log`
+- Tuning options (with `--rust-download`):
+  - `--rust-max-perf` (aggressive defaults)
+  - `--rust-chunk-mb <int>`
+  - `--rust-chunk-workers <int>`
+  - `--rust-runtime-threads <int>`
 
 ### Mode 3: Batch Mode
 

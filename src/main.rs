@@ -14,8 +14,21 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 const REPO_OWNER: &str = "darui3018823";
 const REPO_NAME: &str = "Downloader";
-const RUST_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
-const RUST_CHUNK_WORKERS: usize = 6;
+const DEFAULT_RUST_CHUNK_SIZE_MB: u64 = 8;
+const DEFAULT_RUST_CHUNK_WORKERS: usize = 6;
+const DEFAULT_RUST_RUNTIME_THREADS: usize = 4;
+
+fn parse_u64_ge1(value: &str) -> std::result::Result<u64, String> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| "1以上の整数を指定してください".to_string())?;
+
+    if parsed == 0 {
+        return Err("1以上の整数を指定してください".to_string());
+    }
+
+    Ok(parsed)
+}
 
 fn parse_threads(value: &str) -> std::result::Result<usize, String> {
     let parsed = value
@@ -205,6 +218,22 @@ struct Cli {
     #[arg(long)]
     rust_download: bool,
 
+    /// Rustダウンロード時のチャンクサイズ（MB）
+    #[arg(long, value_parser = parse_u64_ge1)]
+    rust_chunk_mb: Option<u64>,
+
+    /// Rustダウンロード時の並列チャンクワーカー数
+    #[arg(long, value_parser = parse_threads)]
+    rust_chunk_workers: Option<usize>,
+
+    /// Rustダウンロード時のtokio worker thread数
+    #[arg(long, value_parser = parse_threads)]
+    rust_runtime_threads: Option<usize>,
+
+    /// Rustダウンロードを全力設定で実行（CPU/並列を強める）
+    #[arg(long)]
+    rust_max_perf: bool,
+
     /// クレジット情報を表示
     #[arg(long)]
     credit: bool,
@@ -228,6 +257,17 @@ struct DownloadConfig {
     quiet: bool,
     threads: Option<usize>,
     rust_download: bool,
+    rust_chunk_mb: Option<u64>,
+    rust_chunk_workers: Option<usize>,
+    rust_runtime_threads: Option<usize>,
+    rust_max_perf: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RustDownloadTuning {
+    chunk_size_bytes: u64,
+    chunk_workers: usize,
+    runtime_threads: usize,
 }
 
 impl DownloadConfig {
@@ -248,6 +288,49 @@ impl DownloadConfig {
             quiet: cli.quiet,
             threads: cli.threads,
             rust_download: cli.rust_download,
+            rust_chunk_mb: cli.rust_chunk_mb,
+            rust_chunk_workers: cli.rust_chunk_workers,
+            rust_runtime_threads: cli.rust_runtime_threads,
+            rust_max_perf: cli.rust_max_perf,
+        }
+    }
+
+    fn resolve_rust_tuning(&self) -> RustDownloadTuning {
+        let logical_cores = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .max(1);
+
+        let max_perf_chunk_mb = 2;
+        let max_perf_chunk_workers = (logical_cores * 4).max(8);
+        let max_perf_runtime_threads = (logical_cores * 2).max(4);
+
+        let chunk_mb = self.rust_chunk_mb.unwrap_or_else(|| {
+            if self.rust_max_perf {
+                max_perf_chunk_mb
+            } else {
+                DEFAULT_RUST_CHUNK_SIZE_MB
+            }
+        });
+        let chunk_workers = self.rust_chunk_workers.unwrap_or_else(|| {
+            if self.rust_max_perf {
+                max_perf_chunk_workers
+            } else {
+                DEFAULT_RUST_CHUNK_WORKERS
+            }
+        });
+        let runtime_threads = self.rust_runtime_threads.unwrap_or_else(|| {
+            if self.rust_max_perf {
+                max_perf_runtime_threads
+            } else {
+                DEFAULT_RUST_RUNTIME_THREADS
+            }
+        });
+
+        RustDownloadTuning {
+            chunk_size_bytes: chunk_mb.saturating_mul(1024 * 1024),
+            chunk_workers: chunk_workers.max(1),
+            runtime_threads: runtime_threads.max(1),
         }
     }
 }
@@ -1081,6 +1164,7 @@ async fn rust_download_stream(
     output_path: &Path,
     log_path: &Path,
     progress_bar: ProgressBar,
+    tuning: RustDownloadTuning,
 ) -> Result<()> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(30))
@@ -1164,8 +1248,8 @@ async fn rust_download_stream(
             .await
             .context("初期ファイルflushに失敗しました")?;
 
-        let chunk_size = RUST_CHUNK_SIZE.max(1024 * 1024);
-        let worker_count = RUST_CHUNK_WORKERS.max(1);
+        let chunk_size = tuning.chunk_size_bytes.max(1024 * 1024);
+        let worker_count = tuning.chunk_workers.max(1);
         let semaphore = Arc::new(tokio::sync::Semaphore::new(worker_count));
         let mut handles = Vec::new();
 
@@ -1322,6 +1406,9 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
         .with_context(|| format!("抽出処理に失敗しました。ログ: {}", log_path.display()))?;
     let candidate = extract_candidate_from_json(&metadata, config)
         .with_context(|| format!("抽出結果の解釈に失敗しました。ログ: {}", log_path.display()))?;
+    let tuning = config.resolve_rust_tuning();
+
+    append_log(&log_path, &format!("[tuning] {:?}", tuning));
 
     phase.set_message("[flow] 2/4 ダウンロード中...");
 
@@ -1332,10 +1419,16 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
     if !config.quiet {
         println!("Rust download mode: {}", output_path.display());
         println!("詳細ログ: {}", log_path.display());
+        println!(
+            "Rust tuning: chunk={}MB, chunk_workers={}, runtime_threads={}",
+            tuning.chunk_size_bytes / (1024 * 1024),
+            tuning.chunk_workers,
+            tuning.runtime_threads
+        );
     }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
+        .worker_threads(tuning.runtime_threads)
         .enable_all()
         .build()
         .context("tokio runtimeの初期化に失敗しました")?;
@@ -1350,6 +1443,7 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
                 &output_path,
                 &log_path,
                 single_pb,
+                tuning,
             ))
             .with_context(|| {
                 format!(
@@ -1369,8 +1463,8 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
 
         let split_result = runtime.block_on(async {
             tokio::try_join!(
-                rust_download_stream(video_stream, &temp_video, &log_path, video_pb),
-                rust_download_stream(audio_stream, &temp_audio, &log_path, audio_pb),
+                rust_download_stream(video_stream, &temp_video, &log_path, video_pb, tuning),
+                rust_download_stream(audio_stream, &temp_audio, &log_path, audio_pb, tuning),
             )
         });
 
@@ -1588,8 +1682,19 @@ fn interactive_loop(ytdlp_path: &Path, config: &DownloadConfig) -> Result<()> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    let has_rust_perf_flags = cli.rust_max_perf
+        || cli.rust_chunk_mb.is_some()
+        || cli.rust_chunk_workers.is_some()
+        || cli.rust_runtime_threads.is_some();
+
     if cli.update && cli.update_ytdlp {
         bail!("--update と --update-ytdlp は同時に指定できません");
+    }
+
+    if has_rust_perf_flags && !cli.rust_download {
+        bail!(
+            "--rust-chunk-mb / --rust-chunk-workers / --rust-runtime-threads / --rust-max-perf は --rust-download と一緒に指定してください"
+        );
     }
 
     if cli.rust_download {
