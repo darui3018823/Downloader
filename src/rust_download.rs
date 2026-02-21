@@ -917,6 +917,16 @@ fn ffmpeg_hevc_transcode(
     meta: &MediaMetadata,
     quiet: bool,
     show_progress: bool,
+    has_thumbnail: bool,
+) -> Result<bool> {
+    input_path: &Path,
+    output_path: &Path,
+    log_path: &Path,
+    encoder: GpuEncoder,
+    ten_bit: bool,
+    meta: &MediaMetadata,
+    quiet: bool,
+    show_progress: bool,
 ) -> Result<bool> {
     let duration_secs = get_media_duration_secs(input_path, log_path);
 
