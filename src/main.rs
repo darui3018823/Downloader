@@ -1097,7 +1097,13 @@ async fn rust_download_stream(
         .send()
         .await
         .context("HEADリクエストに失敗しました")?;
-    let total_size = head_response.content_length();
+    let total_size = head_response.content_length().filter(|size| *size > 0);
+    let accept_ranges = head_response
+        .headers()
+        .get("accept-ranges")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_ascii_lowercase().contains("bytes"))
+        .unwrap_or(false);
 
     append_log(
         log_path,
@@ -1128,9 +1134,14 @@ async fn rust_download_stream(
         &format!("[download] head_headers: {:?}", head_response.headers()),
     );
 
-    if !head_response.status().is_success() {
-        bail!("HEADのHTTPステータスが異常です: {}", head_response.status());
-    }
+    append_log(
+        log_path,
+        &format!("[download] accept_ranges: {}", accept_ranges),
+    );
+    append_log(
+        log_path,
+        &format!("[download] total_size: {:?}", total_size),
+    );
 
     if let Some(total) = total_size {
         progress_bar.set_length(total);
@@ -1138,7 +1149,9 @@ async fn rust_download_stream(
         progress_bar.set_message(format!("{} (size unknown)", progress_bar.message()));
     }
 
-    if let Some(total) = total_size {
+    if head_response.status().is_success() && accept_ranges {
+        let total =
+            total_size.context("Rangeダウンロード可能ですがContent-Lengthが取得できません")?;
         let mut file = tokio::fs::File::create(output_path)
             .await
             .with_context(|| {
@@ -1214,24 +1227,37 @@ async fn rust_download_stream(
             bail!("HTTPステータスが異常です: {}", response.status());
         }
 
-        let bytes = response
-            .bytes()
-            .await
-            .context("サイズ不明時のレスポンス読み取りに失敗しました")?;
+        let mut response = response;
+        if let Some(total) = response.content_length().filter(|size| *size > 0) {
+            progress_bar.set_length(total);
+        }
+
         let mut file = tokio::fs::File::create(output_path)
             .await
             .with_context(|| {
                 format!("出力ファイル作成に失敗しました: {}", output_path.display())
             })?;
-        file.write_all(&bytes)
-            .await
-            .context("サイズ不明時の書き込みに失敗しました")?;
+        let mut total_written = 0u64;
 
-        progress_bar.set_length(bytes.len() as u64);
-        progress_bar.set_position(bytes.len() as u64);
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .context("サイズ不明時のレスポンス読み取りに失敗しました")?
+        {
+            file.write_all(&chunk)
+                .await
+                .context("サイズ不明時の書き込みに失敗しました")?;
+            total_written += chunk.len() as u64;
+            progress_bar.inc(chunk.len() as u64);
+        }
+
+        if progress_bar.length().is_none() {
+            progress_bar.set_length(total_written);
+            progress_bar.set_position(total_written);
+        }
         append_log(
             log_path,
-            &format!("[download] completed_bytes: {}", bytes.len()),
+            &format!("[download] completed_bytes: {}", total_written),
         );
     }
 
