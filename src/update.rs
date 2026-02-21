@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 // ...existing code...
+#[cfg(windows)]
 use std::process::Command;
 use std::time::Duration;
 

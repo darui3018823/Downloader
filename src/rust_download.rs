@@ -168,7 +168,7 @@ fn is_usable_stream(stream: &RustMediaStream) -> bool {
     !stream.media_url.is_empty() && !stream.has_fragments && !is_stream_protocol(&stream.protocol)
 }
 
-fn best_stream<'a, F>(streams: &'a [RustMediaStream], predicate: F) -> Option<&'a RustMediaStream>
+fn best_stream<F>(streams: &[RustMediaStream], predicate: F) -> Option<&RustMediaStream>
 where
     F: Fn(&RustMediaStream) -> bool,
 {
@@ -424,12 +424,10 @@ async fn rust_download_stream(
         .await
         .context("HEADリクエストに失敗しました")?;
     let head_content_length = head_response.content_length().filter(|size| *size > 0);
-    let json_content_length = stream.filesize.filter(|size| *size > 0).or_else(|| {
-        stream
-            .filesize_approx
-            .filter(|size| *size > 0)
-            .map(|size| size as u64)
-    });
+    let json_content_length = stream
+        .filesize
+        .filter(|size| *size > 0)
+        .or_else(|| stream.filesize_approx.filter(|size| *size > 0));
     let total_size = head_content_length.or(json_content_length);
     let accept_ranges = head_response
         .headers()
@@ -908,6 +906,7 @@ fn get_media_duration_secs(input_path: &Path, log_path: &Path) -> Option<f64> {
 }
 
 /// FFmpeg HEVC 変換を実行（GPU/CPU対応、プログレス表示付き）
+#[allow(clippy::too_many_arguments)]
 fn ffmpeg_hevc_transcode(
     input_path: &Path,
     output_path: &Path,
@@ -976,25 +975,21 @@ fn ffmpeg_hevc_transcode(
 
     // stderr を別スレッドで読み取り（バッファ詰まり防止 + ログ出力）
     let stderr_log_path = log_path.to_path_buf();
-    let stderr_handle = if let Some(stderr) = child.stderr.take() {
-        Some(std::thread::spawn(move || {
+    let stderr_handle = child.stderr.take().map(|stderr| {
+        std::thread::spawn(move || {
             let reader = std::io::BufReader::new(stderr);
             let mut stderr_output = String::new();
-            for line in reader.lines() {
-                if let Ok(l) = line {
-                    stderr_output.push_str(&l);
-                    stderr_output.push('\n');
-                }
+            for l in reader.lines().map_while(Result::ok) {
+                stderr_output.push_str(&l);
+                stderr_output.push('\n');
             }
             append_log(
                 &stderr_log_path,
                 &format!("[hevc-transcode] stderr:\n{}", stderr_output),
             );
             stderr_output
-        }))
-    } else {
-        None
-    };
+        })
+    });
 
     // stdout から -progress 出力を読み取り
     if let Some(stdout) = child.stdout.take() {
