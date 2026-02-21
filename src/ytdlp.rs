@@ -80,13 +80,24 @@ fn download_ytdlp(binaries_dir: &Path, ytdlp_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// yt-dlp の基本コマンドを構築
 pub fn build_command(
     ytdlp_path: &Path,
     platform: Platform,
     url: &str,
     config: &DownloadConfig,
+    is_live: bool,
 ) -> Command {
     let mut cmd = Command::new(ytdlp_path);
+
+    // JS ランタイムの自動検出と適用
+    if which::which("node").is_ok() {
+        cmd.args(["--js-runtimes", "node"]);
+    } else if which::which("bun").is_ok() {
+        cmd.args(["--js-runtimes", "bun"]);
+    } else if which::which("deno").is_ok() {
+        cmd.args(["--js-runtimes", "deno"]);
+    }
 
     if let Err(e) = fs::create_dir_all(&config.output_dir) {
         eprintln!("警告: 出力ディレクトリの作成に失敗: {}", e);

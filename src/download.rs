@@ -18,7 +18,7 @@ pub fn download_url(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Re
         println!("検出されたプラットフォーム: {:?}", platform);
     }
 
-    let cmd = build_command(ytdlp_path, platform, url, config);
+    let cmd = build_command(ytdlp_path, platform, url, config, false);
 
     if !config.quiet {
         println!("ダウンロードを開始します...\n");
@@ -84,7 +84,7 @@ pub fn download_batch(ytdlp_path: &Path, urls: &[String], config: &DownloadConfi
                 }
 
                 let platform = Platform::detect(&url);
-                let cmd = build_command(&ytdlp_path, platform, &url, &config);
+                let cmd = build_command(&ytdlp_path, platform, &url, &config, false);
                 let result = execute_download_command(cmd, true);
                 (url, result)
             }));
