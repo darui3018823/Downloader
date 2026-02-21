@@ -940,7 +940,9 @@ fn ffmpeg_hevc_transcode(
     cmd.args(["-map", "0"]);
     // 2番目のビデオストリーム（サムネイル画像）がHEVC変換に巻き込まれないようにコピーを指定
     // （該当ストリームが存在しない場合はFFmpegが無視するため安全）
-    cmd.args(["-c:v:1", "copy"]);
+    if has_thumbnail {
+        cmd.args(["-c:v:1", "copy"]);
+    }
 
     // メタデータ再埋め込み
     add_metadata_args(&mut cmd, meta);
