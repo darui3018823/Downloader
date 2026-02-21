@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [v2-rc-1] - 2026-02-21
+
+### Added
+- `--dev` flag for developer diagnostics in terminal (stream/range/parallel info)
+
+### Improved
+- Progress bar and spinner output no longer overlap; phase and download progress are visually separated and cleaner
+
+### Docs
+- Documented `--dev` usage in both English and Japanese README
+
 ## [v2-beta7] - 2026-02-21
 
 ### Added
