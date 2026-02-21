@@ -5,8 +5,10 @@ use std::process::Command;
 /// GPU エンコーダの種類
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuEncoder {
-    /// NVIDIA NVENC (hevc_nvenc)
+    /// NVIDIA NVENC (hevc_nvenc) + cuda hwaccel
     Nvenc,
+    /// NVIDIA NVENC (hevc_nvenc) + auto fallback hwaccel
+    NvencFallback,
     /// AMD AMF (hevc_amf)
     Amf,
     /// CPU ソフトウェア (libx265)
@@ -17,7 +19,7 @@ impl GpuEncoder {
     /// FFmpeg エンコーダ名
     pub fn encoder_name(&self) -> &'static str {
         match self {
-            GpuEncoder::Nvenc => "hevc_nvenc",
+            GpuEncoder::Nvenc | GpuEncoder::NvencFallback => "hevc_nvenc",
             GpuEncoder::Amf => "hevc_amf",
             GpuEncoder::Cpu => "libx265",
         }
@@ -29,13 +31,17 @@ impl GpuEncoder {
 
         match self {
             GpuEncoder::Nvenc => {
-                // CUDA ハードウェアアクセラレーション
+                // NVENC: 最速の完全ハードウェア処理
                 args.extend([
                     "-hwaccel".into(),
                     "cuda".into(),
                     "-hwaccel_output_format".into(),
                     "cuda".into(),
                 ]);
+            }
+            GpuEncoder::NvencFallback => {
+                // NVENC (互換): hwaccel auto で安全にデコード高速化
+                args.extend(["-hwaccel".into(), "auto".into()]);
             }
             GpuEncoder::Amf | GpuEncoder::Cpu => {
                 // AMF / CPU はhwaccel不要
@@ -49,7 +55,7 @@ impl GpuEncoder {
 
         // エンコーダ固有パラメータ
         match self {
-            GpuEncoder::Nvenc => {
+            GpuEncoder::Nvenc | GpuEncoder::NvencFallback => {
                 args.extend([
                     "-preset".into(),
                     "p7".into(),
@@ -173,11 +179,23 @@ pub fn detect_gpu_encoder(quiet: bool) -> Result<GpuEncoder> {
     }
 }
 
-/// GPU エンコーダでの HEVC 変換が失敗した場合に CPU フォールバックを試みる
-pub fn try_cpu_fallback(original_encoder: GpuEncoder, quiet: bool) -> Result<Option<GpuEncoder>> {
+/// GPU エンコーダでの HEVC 変換が失敗した場合にフォールバックを試みる
+pub fn try_encoder_fallback(
+    original_encoder: GpuEncoder,
+    quiet: bool,
+) -> Result<Option<GpuEncoder>> {
     if original_encoder == GpuEncoder::Cpu {
         // 既に CPU なのでフォールバック先なし
         return Ok(None);
+    }
+
+    if original_encoder == GpuEncoder::Nvenc {
+        if !quiet {
+            println!();
+            println!("⚠ GPUエンコード (完全ハードウェア処理) に失敗しました。");
+            println!("→ 互換モード (-hwaccel auto) で hevc_nvenc を再試行します...");
+        }
+        return Ok(Some(GpuEncoder::NvencFallback));
     }
 
     if quiet {

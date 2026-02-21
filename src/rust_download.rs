@@ -1,5 +1,5 @@
 use crate::config::{DownloadConfig, RustDownloadTuning};
-use crate::gpu::{detect_gpu_encoder, try_cpu_fallback, GpuEncoder};
+use crate::gpu::{detect_gpu_encoder, try_encoder_fallback, GpuEncoder};
 use crate::progress::{make_download_progress_bar, make_phase_spinner, progress_style_known};
 use crate::utils::{append_log, dev_println, new_error_log_path, sanitize_file_name};
 use anyhow::{bail, Context, Result};
@@ -980,6 +980,28 @@ fn ffmpeg_hevc_transcode(
         pb
     };
 
+    // stderr を別スレッドで読み取り（バッファ詰まり防止 + ログ出力）
+    let stderr_log_path = log_path.to_path_buf();
+    let stderr_handle = if let Some(stderr) = child.stderr.take() {
+        Some(std::thread::spawn(move || {
+            let reader = std::io::BufReader::new(stderr);
+            let mut stderr_output = String::new();
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    stderr_output.push_str(&l);
+                    stderr_output.push('\n');
+                }
+            }
+            append_log(
+                &stderr_log_path,
+                &format!("[hevc-transcode] stderr:\n{}", stderr_output),
+            );
+            stderr_output
+        }))
+    } else {
+        None
+    };
+
     // stdout から -progress 出力を読み取り
     if let Some(stdout) = child.stdout.take() {
         let reader = std::io::BufReader::new(stdout);
@@ -1009,6 +1031,11 @@ fn ffmpeg_hevc_transcode(
 
     pb.finish_and_clear();
 
+    // stderr スレッド合流
+    let stderr_text = stderr_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+
     append_log(
         log_path,
         &format!("[hevc-transcode] exit: {:?}", status.code()),
@@ -1022,6 +1049,13 @@ fn ffmpeg_hevc_transcode(
                 encoder.encoder_name()
             ),
         );
+        if !quiet && !stderr_text.is_empty() {
+            // エラー時は最後の数行を表示
+            let last_lines: Vec<&str> = stderr_text.lines().rev().take(5).collect();
+            for line in last_lines.iter().rev() {
+                eprintln!("  ffmpeg: {}", line);
+            }
+        }
         return Ok(false);
     }
 
@@ -1055,9 +1089,20 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
     let file_name = format!("{}.{}", candidate.title, candidate.output_ext);
     let output_path = PathBuf::from(&config.output_dir).join(file_name);
 
-    // HEVC変換時の最終出力パス（拡張子をmp4に変更）
+    // HEVC変換時の最終出力パス（常に拡張子をmp4に）
     let final_output_path = if config.hevc {
         output_path.with_extension("mp4")
+    } else {
+        output_path.clone()
+    };
+
+    // FFmpeg は同一ファイルへのインプレース変換ができないため、
+    // 入力ファイルへの上書きを防ぐための一時ファイルパスを用意
+    let transcode_temp_path = if config.hevc {
+        // 重複を避けるため .hevc.tmp 等の別名を確実に使う
+        let mut temp_name = final_output_path.file_name().unwrap().to_os_string();
+        temp_name.push(".hevc.tmp");
+        final_output_path.with_file_name(temp_name)
     } else {
         output_path.clone()
     };
@@ -1274,9 +1319,9 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
             encoder.encoder_name()
         ));
 
-        let success = ffmpeg_hevc_transcode(
+        let mut success = ffmpeg_hevc_transcode(
             &output_path,
-            &final_output_path,
+            &transcode_temp_path,
             &log_path,
             encoder,
             config.ten_bit,
@@ -1287,54 +1332,68 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
 
         transcode_phase.finish_and_clear();
 
-        if !success {
-            // GPU 失敗 → CPU フォールバック
-            if let Some(fallback_encoder) = try_cpu_fallback(encoder, config.quiet)? {
+        let mut current_encoder = encoder;
+
+        while !success {
+            // GPU 失敗 → フォールバックリトライ
+            if let Some(fallback_encoder) = try_encoder_fallback(current_encoder, config.quiet)? {
                 let retry_phase = make_phase_spinner(config.quiet)?;
+                let mode_str = if fallback_encoder == GpuEncoder::NvencFallback {
+                    "nvenc 互換モード"
+                } else {
+                    fallback_encoder.encoder_name()
+                };
                 retry_phase.set_message(format!(
                     "[flow] {}/{} HEVC変換リトライ ({})...",
                     total_phases - 1,
                     total_phases,
-                    fallback_encoder.encoder_name()
+                    mode_str
                 ));
 
-                let retry_success = ffmpeg_hevc_transcode(
+                current_encoder = fallback_encoder;
+                success = ffmpeg_hevc_transcode(
                     &output_path,
-                    &final_output_path,
+                    &transcode_temp_path,
                     &log_path,
-                    fallback_encoder,
+                    current_encoder,
                     config.ten_bit,
                     &media_meta,
                     config.quiet,
                 )
                 .with_context(|| {
                     format!(
-                        "HEVC変換 (CPUフォールバック) に失敗しました。ログ: {}",
+                        "HEVC変換 ({}) に失敗しました。ログ: {}",
+                        mode_str,
                         log_path.display()
                     )
                 })?;
 
                 retry_phase.finish_and_clear();
-
-                if !retry_success {
-                    bail!(
-                        "HEVC変換に失敗しました (CPUフォールバック含む)。ログ: {}",
-                        log_path.display()
-                    );
-                }
             } else {
                 bail!("HEVC変換に失敗しました。ログ: {}", log_path.display());
             }
         }
 
-        // HEVC 変換成功: ソースファイル (AV1/Opus) を削除
+        // HEVC 変換成功: ソースファイルを削除し、テンポラリを最終ファイルにリネーム
         if output_path != final_output_path {
-            let _ = fs::remove_file(&output_path);
-            append_log(
-                &log_path,
-                &format!("[hevc] source removed: {}", output_path.display()),
-            );
+            let _ = std::fs::remove_file(&output_path); // 元ファイル(別拡張子)の削除
         }
+        if transcode_temp_path != final_output_path {
+            // 元が .mp4 同士ならソースを消してからリネームする
+            if output_path == final_output_path {
+                let _ = std::fs::remove_file(&output_path);
+            }
+            std::fs::rename(&transcode_temp_path, &final_output_path)
+                .context("変換後ファイルのリネームに失敗しました")?;
+        }
+
+        append_log(
+            &log_path,
+            &format!(
+                "[hevc] source replaced with: {}",
+                final_output_path.display()
+            ),
+        );
     }
 
     append_log(&log_path, "=== rust-download mode done ===");
