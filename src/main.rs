@@ -100,6 +100,25 @@ fn append_log(log_path: &Path, message: &str) {
     let _ = writeln!(file, "{}", message);
 }
 
+fn dev_println(config: &DownloadConfig, message: &str) {
+    if config.dev && !config.quiet {
+        println!("[dev] {}", message);
+    }
+}
+
+fn progress_style_known() -> Result<ProgressStyle> {
+    Ok(ProgressStyle::with_template(
+        "{msg:8} {bar:30.cyan/blue} {percent:>3}% {bytes}/{total_bytes} {bytes_per_sec} ETA {eta}",
+    )?
+    .progress_chars("=>-"))
+}
+
+fn progress_style_unknown() -> Result<ProgressStyle> {
+    Ok(ProgressStyle::with_template(
+        "{msg:8} {spinner:.cyan} {bytes} {bytes_per_sec}",
+    )?)
+}
+
 fn make_download_progress_bar(
     multi: Option<&MultiProgress>,
     label: &str,
@@ -109,13 +128,9 @@ fn make_download_progress_bar(
         return Ok(ProgressBar::hidden());
     }
 
-    let style = ProgressStyle::with_template(
-        "{msg:8} {bar:30.cyan/blue} {percent:>3}% {bytes}/{total_bytes} {bytes_per_sec} ETA {eta}",
-    )?
-    .progress_chars("=>-");
-
-    let pb = ProgressBar::new(0);
-    pb.set_style(style);
+    let pb = ProgressBar::new_spinner();
+    pb.enable_steady_tick(Duration::from_millis(120));
+    pb.set_style(progress_style_unknown()?);
     pb.set_message(label.to_string());
 
     Ok(match multi {
@@ -210,6 +225,10 @@ struct Cli {
     #[arg(short = 'q', long)]
     quiet: bool,
 
+    /// 開発者向け詳細ログをTerminalにも表示
+    #[arg(long)]
+    dev: bool,
+
     /// バッチモード時の最大スレッド数（--urls 専用）
     #[arg(short = 't', long, value_parser = parse_threads)]
     threads: Option<usize>,
@@ -255,6 +274,7 @@ struct DownloadConfig {
     convert_subs: Option<String>,
     verbose: bool,
     quiet: bool,
+    dev: bool,
     threads: Option<usize>,
     rust_download: bool,
     rust_chunk_mb: Option<u64>,
@@ -286,6 +306,7 @@ impl DownloadConfig {
             convert_subs: cli.convert_subs.clone(),
             verbose: cli.verbose,
             quiet: cli.quiet,
+            dev: cli.dev,
             threads: cli.threads,
             rust_download: cli.rust_download,
             rust_chunk_mb: cli.rust_chunk_mb,
@@ -1204,6 +1225,7 @@ async fn rust_download_stream(
     log_path: &Path,
     progress_bar: ProgressBar,
     tuning: RustDownloadTuning,
+    dev: bool,
 ) -> Result<()> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(30))
@@ -1287,9 +1309,23 @@ async fn rust_download_stream(
     );
 
     if let Some(total) = total_size {
+        progress_bar.set_style(progress_style_known()?);
+        progress_bar.disable_steady_tick();
         progress_bar.set_length(total);
     } else {
         progress_bar.set_message(format!("{} (size unknown)", progress_bar.message()));
+    }
+
+    if dev {
+        println!(
+            "[dev] stream={:?} accept_ranges={} head_size={:?} json_size={:?}/{:?} resolved_total={:?}",
+            stream.format_id,
+            accept_ranges,
+            head_content_length,
+            stream.filesize,
+            stream.filesize_approx,
+            total_size
+        );
     }
 
     if head_response.status().is_success() && total_size.is_some() {
@@ -1315,6 +1351,12 @@ async fn rust_download_stream(
                 total, chunk_size, worker_count
             ),
         );
+        if dev {
+            println!(
+                "[dev] parallel_range enabled total={} chunk={} workers={}",
+                total, chunk_size, worker_count
+            );
+        }
         let semaphore = Arc::new(tokio::sync::Semaphore::new(worker_count));
         let mut handles = Vec::new();
 
@@ -1378,6 +1420,8 @@ async fn rust_download_stream(
 
         let mut response = response;
         if let Some(total) = response.content_length().filter(|size| *size > 0) {
+            progress_bar.set_style(progress_style_known()?);
+            progress_bar.disable_steady_tick();
             progress_bar.set_length(total);
         }
 
@@ -1464,8 +1508,8 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
     append_log(&log_path, &format!("[input] url: {}", url));
     append_log(&log_path, &format!("[config] {:?}", config));
 
-    let phase = make_phase_spinner(config.quiet)?;
-    phase.set_message("[flow] 1/4 抽出中...");
+    let extract_phase = make_phase_spinner(config.quiet)?;
+    extract_phase.set_message("[flow] 1/4 抽出中...");
 
     let metadata = extract_with_ytdlp(ytdlp_path, url, config, &log_path)
         .with_context(|| format!("抽出処理に失敗しました。ログ: {}", log_path.display()))?;
@@ -1474,8 +1518,7 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
     let tuning = config.resolve_rust_tuning();
 
     append_log(&log_path, &format!("[tuning] {:?}", tuning));
-
-    phase.set_message("[flow] 2/4 ダウンロード中...");
+    extract_phase.finish_and_clear();
 
     fs::create_dir_all(&config.output_dir).context("出力ディレクトリの作成に失敗しました")?;
     let file_name = format!("{}.{}", candidate.title, candidate.output_ext);
@@ -1491,6 +1534,16 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
             tuning.runtime_threads
         );
     }
+
+    dev_println(
+        config,
+        &format!(
+            "candidate single={} video={} audio={}",
+            candidate.single_stream.is_some(),
+            candidate.video_stream.is_some(),
+            candidate.audio_stream.is_some()
+        ),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(tuning.runtime_threads)
@@ -1509,6 +1562,7 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
                 &log_path,
                 single_pb,
                 tuning,
+                config.dev,
             ))
             .with_context(|| {
                 format!(
@@ -1528,8 +1582,22 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
 
         let split_result = runtime.block_on(async {
             tokio::try_join!(
-                rust_download_stream(video_stream, &temp_video, &log_path, video_pb, tuning),
-                rust_download_stream(audio_stream, &temp_audio, &log_path, audio_pb, tuning),
+                rust_download_stream(
+                    video_stream,
+                    &temp_video,
+                    &log_path,
+                    video_pb,
+                    tuning,
+                    config.dev
+                ),
+                rust_download_stream(
+                    audio_stream,
+                    &temp_audio,
+                    &log_path,
+                    audio_pb,
+                    tuning,
+                    config.dev
+                ),
             )
         });
 
@@ -1540,7 +1608,8 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
             )
         })?;
 
-        phase.set_message("[flow] 3/4 ffmpeg結合中...");
+        let merge_phase = make_phase_spinner(config.quiet)?;
+        merge_phase.set_message("[flow] 3/4 ffmpeg結合中...");
 
         ffmpeg_merge_streams(&temp_video, &temp_audio, &output_path, &log_path).with_context(
             || {
@@ -1550,6 +1619,7 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
                 )
             },
         )?;
+        merge_phase.finish_and_clear();
 
         let _ = fs::remove_file(&temp_video);
         let _ = fs::remove_file(&temp_audio);
@@ -1561,7 +1631,9 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
 
     append_log(&log_path, "=== rust-download mode done ===");
 
-    phase.finish_with_message("[flow] 4/4 完了");
+    if !config.quiet {
+        println!("[flow] 4/4 完了");
+    }
     if !config.quiet {
         println!("\n✓ Rustダウンロードが完了しました。\n");
     }

@@ -115,6 +115,12 @@ High-performance stress test example:
 .\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download --rust-max-perf
 ```
 
+Developer diagnostics example (prints detailed stream/range info to terminal):
+
+```bash
+.\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download --rust-max-perf --dev
+```
+
 - `--rust-download` is available only with `--url` (single URL mode)
 - No automatic fallback to regular yt-dlp download in this mode
 - If it hangs or fails, rerun without `--rust-download`
@@ -124,6 +130,7 @@ High-performance stress test example:
   - `--rust-chunk-mb <int>`
   - `--rust-chunk-workers <int>`
   - `--rust-runtime-threads <int>`
+- `--dev`: prints developer-oriented diagnostics to terminal
 
 ### Mode 3: Batch Mode
 

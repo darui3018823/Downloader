@@ -116,6 +116,12 @@ yt-dlp には抽出だけを行わせ、実際のファイルダウンロード�
 .\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download --rust-max-perf
 ```
 
+開発者向け詳細表示の例（ストリーム/Range情報をTerminalへ表示）:
+
+```bash
+.\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download --rust-max-perf --dev
+```
+
 - `--rust-download` は `--url`（単一URLモード）専用です
 - このモードでは通常の yt-dlp ダウンロードへの自動フォールバックはしません
 - ハング/失敗した場合は `--rust-download` を外して再実行してください
@@ -125,6 +131,7 @@ yt-dlp には抽出だけを行わせ、実際のファイルダウンロード�
   - `--rust-chunk-mb <整数>`
   - `--rust-chunk-workers <整数>`
   - `--rust-runtime-threads <整数>`
+- `--dev`: 開発者向け詳細診断をTerminalに表示
 
 ### モード3: バッチモード
 
