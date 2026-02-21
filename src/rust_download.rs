@@ -1321,7 +1321,9 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
             &media_meta,
             config.quiet,
             !config.quiet,
+            thumbnail_path.is_some(),
         )
+        .with_context(|| format!("HEVC変換の実行に失敗しました。ログ: {}", log_path.display()))?;
         .with_context(|| format!("HEVC変換の実行に失敗しました。ログ: {}", log_path.display()))?;
 
         transcode_phase.finish_and_clear();
