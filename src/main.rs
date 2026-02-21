@@ -1,15 +1,21 @@
 use anyhow::{bail, Context, Result};
 use clap::Parser;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use reqwest::header::RANGE;
 use serde_json::Value;
 use std::fs::{self, OpenOptions};
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 const REPO_OWNER: &str = "darui3018823";
 const REPO_NAME: &str = "Downloader";
+const RUST_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
+const RUST_CHUNK_WORKERS: usize = 6;
 
 fn parse_threads(value: &str) -> std::result::Result<usize, String> {
     let parsed = value
@@ -79,6 +85,41 @@ fn append_log(log_path: &Path, message: &str) {
     };
 
     let _ = writeln!(file, "{}", message);
+}
+
+fn make_download_progress_bar(
+    multi: Option<&MultiProgress>,
+    label: &str,
+    quiet: bool,
+) -> Result<ProgressBar> {
+    if quiet {
+        return Ok(ProgressBar::hidden());
+    }
+
+    let style = ProgressStyle::with_template(
+        "{msg:8} {bar:30.cyan/blue} {percent:>3}% {bytes}/{total_bytes} {bytes_per_sec} ETA {eta}",
+    )?
+    .progress_chars("=>-");
+
+    let pb = ProgressBar::new(0);
+    pb.set_style(style);
+    pb.set_message(label.to_string());
+
+    Ok(match multi {
+        Some(m) => m.add(pb),
+        None => pb,
+    })
+}
+
+fn make_phase_spinner(quiet: bool) -> Result<ProgressBar> {
+    if quiet {
+        return Ok(ProgressBar::hidden());
+    }
+
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(ProgressStyle::with_template("{spinner:.green} {msg}")?);
+    spinner.enable_steady_tick(Duration::from_millis(120));
+    Ok(spinner)
 }
 
 /// yt-dlpを使用した動画ダウンローダー
@@ -975,22 +1016,87 @@ fn extract_with_ytdlp(
     Ok(metadata)
 }
 
-fn rust_download_stream(
-    stream: &RustMediaStream,
-    output_path: &Path,
-    log_path: &Path,
-    progress_label: &str,
-    show_progress: bool,
-) -> Result<()> {
-    let client = reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(30))
-        .build()
-        .context("HTTPクライアントの作成に失敗しました")?;
+async fn download_range_chunk(
+    client: Arc<reqwest::Client>,
+    stream: RustMediaStream,
+    output_path: PathBuf,
+    log_path: PathBuf,
+    start: u64,
+    end: u64,
+) -> Result<u64> {
+    let range_header = format!("bytes={}-{}", start, end);
 
-    let mut request = client.get(&stream.media_url);
+    let mut request = client.get(&stream.media_url).header(RANGE, range_header);
     for (key, value) in &stream.headers {
         request = request.header(key, value);
     }
+
+    let response = request
+        .send()
+        .await
+        .context("Rangeリクエスト送信に失敗しました")?;
+    let status = response.status();
+    if !(status == reqwest::StatusCode::PARTIAL_CONTENT
+        || (status == reqwest::StatusCode::OK && start == 0))
+    {
+        bail!("Range取得に失敗しました: {}", status);
+    }
+    if status == reqwest::StatusCode::OK && start > 0 {
+        bail!("サーバーがRangeヘッダを無視しました");
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .context("Rangeレスポンス読み取りに失敗しました")?;
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .open(&output_path)
+        .await
+        .with_context(|| format!("出力ファイルを開けません: {}", output_path.display()))?;
+    file.seek(std::io::SeekFrom::Start(start))
+        .await
+        .context("Range書き込み位置のシークに失敗しました")?;
+    file.write_all(&bytes)
+        .await
+        .context("Rangeデータの書き込みに失敗しました")?;
+
+    append_log(
+        &log_path,
+        &format!(
+            "[download] chunk_done start={} end={} size={}",
+            start,
+            end,
+            bytes.len()
+        ),
+    );
+
+    Ok(bytes.len() as u64)
+}
+
+async fn rust_download_stream(
+    stream: &RustMediaStream,
+    output_path: &Path,
+    log_path: &Path,
+    progress_bar: ProgressBar,
+) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(300))
+        .build()
+        .context("HTTPクライアントの作成に失敗しました")?;
+    let client = Arc::new(client);
+
+    let mut head_request = client.head(&stream.media_url);
+    for (key, value) in &stream.headers {
+        head_request = head_request.header(key, value);
+    }
+
+    let head_response = head_request
+        .send()
+        .await
+        .context("HEADリクエストに失敗しました")?;
+    let total_size = head_response.content_length();
 
     append_log(
         log_path,
@@ -1012,80 +1118,123 @@ fn rust_download_stream(
         &format!("[download] headers_from_extract: {:?}", stream.headers),
     );
 
-    let mut response = request
-        .send()
-        .context("Rustダウンロード要求に失敗しました")?;
     append_log(
         log_path,
-        &format!("[download] status: {}", response.status()),
+        &format!("[download] head_status: {}", head_response.status()),
     );
     append_log(
         log_path,
-        &format!("[download] response_headers: {:?}", response.headers()),
+        &format!("[download] head_headers: {:?}", head_response.headers()),
     );
 
-    if !response.status().is_success() {
-        bail!("HTTPステータスが異常です: {}", response.status());
+    if !head_response.status().is_success() {
+        bail!("HEADのHTTPステータスが異常です: {}", head_response.status());
     }
 
-    let total_size = response.content_length();
-    if show_progress {
-        if let Some(total) = total_size {
-            println!("[{}] 開始: {} bytes", progress_label, total);
-        } else {
-            println!("[{}] 開始", progress_label);
-        }
+    if let Some(total) = total_size {
+        progress_bar.set_length(total);
+    } else {
+        progress_bar.set_message(format!("{} (size unknown)", progress_bar.message()));
     }
 
-    let mut file = fs::File::create(output_path)
-        .with_context(|| format!("出力ファイル作成に失敗しました: {}", output_path.display()))?;
-    let mut buf = [0u8; 64 * 1024];
-    let mut total_bytes: u64 = 0;
-    let mut last_reported_mb: u64 = 0;
-    let mut last_percent_reported: u64 = 0;
+    if let Some(total) = total_size {
+        let mut file = tokio::fs::File::create(output_path)
+            .await
+            .with_context(|| {
+                format!("出力ファイル作成に失敗しました: {}", output_path.display())
+            })?;
+        file.set_len(total).await.with_context(|| {
+            format!("出力ファイル拡張に失敗しました: {}", output_path.display())
+        })?;
+        file.flush()
+            .await
+            .context("初期ファイルflushに失敗しました")?;
 
-    loop {
-        let read = response
-            .read(&mut buf)
-            .context("レスポンス読み取りに失敗しました")?;
-        if read == 0 {
-            break;
+        let chunk_size = RUST_CHUNK_SIZE.max(1024 * 1024);
+        let worker_count = RUST_CHUNK_WORKERS.max(1);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(worker_count));
+        let mut handles = Vec::new();
+
+        let mut start = 0u64;
+        while start < total {
+            let end = (start + chunk_size - 1).min(total - 1);
+
+            let permit = semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .context("ダウンロードワーカ取得に失敗しました")?;
+            let client_cloned = client.clone();
+            let stream_cloned = stream.clone();
+            let path_cloned = output_path.to_path_buf();
+            let log_cloned = log_path.to_path_buf();
+            let pb = progress_bar.clone();
+
+            handles.push(tokio::spawn(async move {
+                let _permit = permit;
+                let written = download_range_chunk(
+                    client_cloned,
+                    stream_cloned,
+                    path_cloned,
+                    log_cloned,
+                    start,
+                    end,
+                )
+                .await?;
+                pb.inc(written);
+                Ok::<u64, anyhow::Error>(written)
+            }));
+
+            start = end + 1;
         }
 
-        file.write_all(&buf[..read])
-            .context("出力ファイル書き込みに失敗しました")?;
-        total_bytes += read as u64;
-
-        let current_mb = total_bytes / (1024 * 1024);
-        if current_mb >= last_reported_mb + 10 {
-            last_reported_mb = current_mb;
-            append_log(
-                log_path,
-                &format!("[download] progress_bytes: {}", total_bytes),
-            );
+        let mut written_total = 0u64;
+        for handle in handles {
+            let written = handle
+                .await
+                .map_err(|_| anyhow::anyhow!("チャンクDLタスクがpanicしました"))??;
+            written_total += written;
         }
 
-        if show_progress {
-            if let Some(total) = total_size {
-                if total > 0 {
-                    let percent = (total_bytes.saturating_mul(100) / total).min(100);
-                    if percent >= last_percent_reported + 5 || percent == 100 {
-                        last_percent_reported = percent;
-                        println!("[{}] {}%", progress_label, percent);
-                    }
-                }
-            }
+        append_log(
+            log_path,
+            &format!("[download] completed_bytes: {}", written_total),
+        );
+    } else {
+        let mut request = client.get(&stream.media_url);
+        for (key, value) in &stream.headers {
+            request = request.header(key, value);
         }
+        let response = request
+            .send()
+            .await
+            .context("サイズ不明時のGET送信に失敗しました")?;
+        if !response.status().is_success() {
+            bail!("HTTPステータスが異常です: {}", response.status());
+        }
+
+        let bytes = response
+            .bytes()
+            .await
+            .context("サイズ不明時のレスポンス読み取りに失敗しました")?;
+        let mut file = tokio::fs::File::create(output_path)
+            .await
+            .with_context(|| {
+                format!("出力ファイル作成に失敗しました: {}", output_path.display())
+            })?;
+        file.write_all(&bytes)
+            .await
+            .context("サイズ不明時の書き込みに失敗しました")?;
+
+        progress_bar.set_length(bytes.len() as u64);
+        progress_bar.set_position(bytes.len() as u64);
+        append_log(
+            log_path,
+            &format!("[download] completed_bytes: {}", bytes.len()),
+        );
     }
 
-    append_log(
-        log_path,
-        &format!("[download] completed_bytes: {}", total_bytes),
-    );
-
-    if show_progress {
-        println!("[{}] 完了", progress_label);
-    }
+    progress_bar.finish_with_message(format!("{} done", progress_bar.message()));
 
     Ok(())
 }
@@ -1139,14 +1288,15 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
     append_log(&log_path, &format!("[input] url: {}", url));
     append_log(&log_path, &format!("[config] {:?}", config));
 
-    if !config.quiet {
-        println!("[flow] 1/4 抽出中...");
-    }
+    let phase = make_phase_spinner(config.quiet)?;
+    phase.set_message("[flow] 1/4 抽出中...");
 
     let metadata = extract_with_ytdlp(ytdlp_path, url, config, &log_path)
         .with_context(|| format!("抽出処理に失敗しました。ログ: {}", log_path.display()))?;
     let candidate = extract_candidate_from_json(&metadata, config)
         .with_context(|| format!("抽出結果の解釈に失敗しました。ログ: {}", log_path.display()))?;
+
+    phase.set_message("[flow] 2/4 ダウンロード中...");
 
     fs::create_dir_all(&config.output_dir).context("出力ディレクトリの作成に失敗しました")?;
     let file_name = format!("{}.{}", candidate.title, candidate.output_ext);
@@ -1157,85 +1307,54 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
         println!("詳細ログ: {}", log_path.display());
     }
 
-    if let Some(single_stream) = &candidate.single_stream {
-        if !config.quiet {
-            println!("[flow] 2/4 単一ストリームDL中...");
-        }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .context("tokio runtimeの初期化に失敗しました")?;
 
-        rust_download_stream(
-            single_stream,
-            &output_path,
-            &log_path,
-            "single",
-            !config.quiet,
-        )
-        .with_context(|| {
-            format!(
-                "Rustダウンロード失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
-                log_path.display()
-            )
-        })?;
+    if let Some(single_stream) = &candidate.single_stream {
+        let multi = MultiProgress::new();
+        let single_pb = make_download_progress_bar(Some(&multi), "single", config.quiet)?;
+
+        runtime
+            .block_on(rust_download_stream(
+                single_stream,
+                &output_path,
+                &log_path,
+                single_pb,
+            ))
+            .with_context(|| {
+                format!(
+                    "Rustダウンロード失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
+                    log_path.display()
+                )
+            })?;
     } else if let (Some(video_stream), Some(audio_stream)) =
         (&candidate.video_stream, &candidate.audio_stream)
     {
         let temp_video = output_path.with_extension("video.tmp");
         let temp_audio = output_path.with_extension("audio.tmp");
 
-        if !config.quiet {
-            println!("[flow] 2/4 動画/音声の並列DL中...");
-        }
+        let multi = MultiProgress::new();
+        let video_pb = make_download_progress_bar(Some(&multi), "video", config.quiet)?;
+        let audio_pb = make_download_progress_bar(Some(&multi), "audio", config.quiet)?;
 
-        let video_stream = video_stream.clone();
-        let audio_stream = audio_stream.clone();
-        let video_log = log_path.clone();
-        let audio_log = log_path.clone();
-        let video_path = temp_video.clone();
-        let audio_path = temp_audio.clone();
-        let show_progress = !config.quiet;
-
-        let video_handle = thread::spawn(move || {
-            rust_download_stream(
-                &video_stream,
-                &video_path,
-                &video_log,
-                "video",
-                show_progress,
+        let split_result = runtime.block_on(async {
+            tokio::try_join!(
+                rust_download_stream(video_stream, &temp_video, &log_path, video_pb),
+                rust_download_stream(audio_stream, &temp_audio, &log_path, audio_pb),
             )
         });
 
-        let audio_handle = thread::spawn(move || {
-            rust_download_stream(
-                &audio_stream,
-                &audio_path,
-                &audio_log,
-                "audio",
-                show_progress,
-            )
-        });
-
-        let video_result = video_handle
-            .join()
-            .map_err(|_| anyhow::anyhow!("動画DLスレッドがpanicしました"))?;
-        video_result.with_context(|| {
+        split_result.with_context(|| {
             format!(
-                "動画ストリームDL失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
+                "動画/音声ストリームDL失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
                 log_path.display()
             )
         })?;
 
-        let audio_result = audio_handle
-            .join()
-            .map_err(|_| anyhow::anyhow!("音声DLスレッドがpanicしました"))?;
-        audio_result.with_context(|| {
-            format!(
-                "音声ストリームDL失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
-                log_path.display()
-            )
-        })?;
-
-        if !config.quiet {
-            println!("[flow] 3/4 ffmpeg結合中...");
-        }
+        phase.set_message("[flow] 3/4 ffmpeg結合中...");
 
         ffmpeg_merge_streams(&temp_video, &temp_audio, &output_path, &log_path).with_context(
             || {
@@ -1256,8 +1375,8 @@ fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -
 
     append_log(&log_path, "=== rust-download mode done ===");
 
+    phase.finish_with_message("[flow] 4/4 完了");
     if !config.quiet {
-        println!("[flow] 4/4 完了");
         println!("\n✓ Rustダウンロードが完了しました。\n");
     }
 
