@@ -1,13 +1,15 @@
 use crate::config::{DownloadConfig, RustDownloadTuning};
+use crate::gpu::{detect_gpu_encoder, try_cpu_fallback, GpuEncoder};
 use crate::progress::{make_download_progress_bar, make_phase_spinner, progress_style_known};
 use crate::utils::{append_log, dev_println, new_error_log_path, sanitize_file_name};
 use anyhow::{bail, Context, Result};
-use indicatif::{MultiProgress, ProgressBar};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use reqwest::header::RANGE;
 use serde_json::Value;
 use std::fs;
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
@@ -287,8 +289,11 @@ fn extract_with_ytdlp(
 
     if config.audio_only {
         cmd.args(["-f", "bestaudio/best"]);
-    } else {
+    } else if config.mp4_compat {
         cmd.args(["-f", "best/bv*+ba/b"]);
+    } else {
+        // デフォルト: yt-dlp の自動選択（最高効率 AV1/Opus 等）
+        cmd.args(["-f", "bv*+ba/b"]);
     }
 
     if let Some(cookies) = &config.cookies {
@@ -881,14 +886,159 @@ fn ffmpeg_embed_metadata(
     Ok(())
 }
 
+/// FFmpeg で入力ファイルの再生時間を取得（秒）
+fn get_media_duration_secs(input_path: &Path, log_path: &Path) -> Option<f64> {
+    let output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(input_path.as_os_str())
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let duration = stdout.trim().parse::<f64>().ok()?;
+    append_log(log_path, &format!("[ffprobe] duration: {} secs", duration));
+    Some(duration)
+}
+
+/// FFmpeg HEVC 変換を実行（GPU/CPU対応、プログレス表示付き）
+fn ffmpeg_hevc_transcode(
+    input_path: &Path,
+    output_path: &Path,
+    log_path: &Path,
+    encoder: GpuEncoder,
+    ten_bit: bool,
+    meta: &MediaMetadata,
+    quiet: bool,
+) -> Result<bool> {
+    let duration_secs = get_media_duration_secs(input_path, log_path);
+
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-hide_banner", "-y"]);
+
+    // GPU エンコーダ固有の引数（hwaccel等は入力より前に指定）
+    let encode_args = encoder.build_encode_args(ten_bit);
+
+    // hwaccel 関連の引数は -i より前に配置
+    let mut pre_input_args: Vec<&str> = Vec::new();
+    let mut post_input_args: Vec<&str> = Vec::new();
+    let mut iter = encode_args.iter();
+    let mut before_encoder = true;
+    while let Some(arg) = iter.next() {
+        if arg == "-c:v" {
+            before_encoder = false;
+        }
+        if before_encoder {
+            pre_input_args.push(arg);
+        } else {
+            post_input_args.push(arg);
+        }
+    }
+
+    for arg in &pre_input_args {
+        cmd.arg(arg);
+    }
+
+    cmd.args(["-i", &input_path.to_string_lossy()]);
+
+    for arg in &post_input_args {
+        cmd.arg(arg);
+    }
+
+    // メタデータ再埋め込み
+    add_metadata_args(&mut cmd, meta);
+
+    // プログレス出力
+    cmd.args(["-progress", "pipe:1"]);
+
+    cmd.arg(output_path.as_os_str());
+
+    // stdout/stderr をパイプ
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    append_log(log_path, &format!("[hevc-transcode] command: {:?}", cmd));
+
+    let mut child = cmd.spawn().context("FFmpeg HEVC変換の起動に失敗しました")?;
+
+    // プログレスバー
+    let pb = if quiet {
+        ProgressBar::hidden()
+    } else {
+        let pb = ProgressBar::new(100);
+        pb.set_style(
+            ProgressStyle::with_template("{msg:12} {bar:30.magenta/blue} {percent:>3}% ETA {eta}")
+                .unwrap_or_else(|_| ProgressStyle::default_bar())
+                .progress_chars("=>-"),
+        );
+        pb.set_message("HEVC変換中");
+        pb
+    };
+
+    // stdout から -progress 出力を読み取り
+    if let Some(stdout) = child.stdout.take() {
+        let reader = std::io::BufReader::new(stdout);
+        for line in reader.lines() {
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+            // -progress pipe:1 は "out_time_us=123456" 等を出力
+            if let Some(time_us_str) = line.strip_prefix("out_time_us=") {
+                if let Ok(time_us) = time_us_str.trim().parse::<i64>() {
+                    if time_us > 0 {
+                        let elapsed_secs = time_us as f64 / 1_000_000.0;
+                        if let Some(total) = duration_secs {
+                            let pct = ((elapsed_secs / total) * 100.0).min(100.0) as u64;
+                            pb.set_position(pct);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let status = child
+        .wait()
+        .context("FFmpeg HEVC変換の完了待ちに失敗しました")?;
+
+    pb.finish_and_clear();
+
+    append_log(
+        log_path,
+        &format!("[hevc-transcode] exit: {:?}", status.code()),
+    );
+
+    if !status.success() {
+        append_log(
+            log_path,
+            &format!(
+                "[hevc-transcode] failed with encoder: {}",
+                encoder.encoder_name()
+            ),
+        );
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
 pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result<()> {
     let log_path = new_error_log_path(url)?;
     append_log(&log_path, "=== rust-download mode start ===");
     append_log(&log_path, &format!("[input] url: {}", url));
     append_log(&log_path, &format!("[config] {:?}", config));
 
+    // HEVC変換が有効な場合のフロー数を調整
+    let total_phases = if config.hevc { 6 } else { 5 };
+
     let extract_phase = make_phase_spinner(config.quiet)?;
-    extract_phase.set_message("[flow] 1/5 抽出中...");
+    extract_phase.set_message(format!("[flow] 1/{} 抽出中...", total_phases));
 
     let metadata = extract_with_ytdlp(ytdlp_path, url, config, &log_path)
         .with_context(|| format!("抽出処理に失敗しました。ログ: {}", log_path.display()))?;
@@ -905,8 +1055,15 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
     let file_name = format!("{}.{}", candidate.title, candidate.output_ext);
     let output_path = PathBuf::from(&config.output_dir).join(file_name);
 
+    // HEVC変換時の最終出力パス（拡張子をmp4に変更）
+    let final_output_path = if config.hevc {
+        output_path.with_extension("mp4")
+    } else {
+        output_path.clone()
+    };
+
     if !config.quiet {
-        println!("Rust download mode: {}", output_path.display());
+        println!("Rust download mode: {}", final_output_path.display());
         println!("詳細ログ: {}", log_path.display());
         println!(
             "Rust tuning: chunk={}MB, chunk_workers={}, runtime_threads={}",
@@ -914,6 +1071,12 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
             tuning.chunk_workers,
             tuning.runtime_threads
         );
+        if config.hevc {
+            println!(
+                "HEVC変換: 有効 (10-bit: {})",
+                if config.ten_bit { "有効" } else { "無効" }
+            );
+        }
     }
 
     dev_println(
@@ -995,7 +1158,7 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
 
         if embed_metadata {
             let embed_phase = make_phase_spinner(config.quiet)?;
-            embed_phase.set_message("[flow] 3/5 メタデータ埋め込み中...");
+            embed_phase.set_message(format!("[flow] 3/{} メタデータ埋め込み中...", total_phases));
 
             ffmpeg_embed_metadata(
                 &download_target,
@@ -1048,7 +1211,10 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
         })?;
 
         let merge_phase = make_phase_spinner(config.quiet)?;
-        merge_phase.set_message("[flow] 3/5 ffmpeg結合 + メタデータ埋め込み中...");
+        merge_phase.set_message(format!(
+            "[flow] 3/{} ffmpeg結合 + メタデータ埋め込み中...",
+            total_phases
+        ));
 
         ffmpeg_merge_streams(
             &temp_video,
@@ -1079,10 +1245,102 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
         let _ = fs::remove_file(thumb);
     }
 
+    // HEVC 変換ステップ
+    if config.hevc {
+        let hevc_phase = make_phase_spinner(config.quiet)?;
+        hevc_phase.set_message(format!(
+            "[flow] {}/{} GPU検出中...",
+            total_phases - 1,
+            total_phases
+        ));
+
+        let encoder = detect_gpu_encoder(config.quiet)?;
+
+        append_log(
+            &log_path,
+            &format!("[hevc] detected encoder: {:?}", encoder),
+        );
+        dev_println(
+            config,
+            &format!("HEVC encoder: {:?} ({})", encoder, encoder.encoder_name()),
+        );
+        hevc_phase.finish_and_clear();
+
+        let transcode_phase = make_phase_spinner(config.quiet)?;
+        transcode_phase.set_message(format!(
+            "[flow] {}/{} HEVC変換中 ({})...",
+            total_phases - 1,
+            total_phases,
+            encoder.encoder_name()
+        ));
+
+        let success = ffmpeg_hevc_transcode(
+            &output_path,
+            &final_output_path,
+            &log_path,
+            encoder,
+            config.ten_bit,
+            &media_meta,
+            config.quiet,
+        )
+        .with_context(|| format!("HEVC変換の実行に失敗しました。ログ: {}", log_path.display()))?;
+
+        transcode_phase.finish_and_clear();
+
+        if !success {
+            // GPU 失敗 → CPU フォールバック
+            if let Some(fallback_encoder) = try_cpu_fallback(encoder, config.quiet)? {
+                let retry_phase = make_phase_spinner(config.quiet)?;
+                retry_phase.set_message(format!(
+                    "[flow] {}/{} HEVC変換リトライ ({})...",
+                    total_phases - 1,
+                    total_phases,
+                    fallback_encoder.encoder_name()
+                ));
+
+                let retry_success = ffmpeg_hevc_transcode(
+                    &output_path,
+                    &final_output_path,
+                    &log_path,
+                    fallback_encoder,
+                    config.ten_bit,
+                    &media_meta,
+                    config.quiet,
+                )
+                .with_context(|| {
+                    format!(
+                        "HEVC変換 (CPUフォールバック) に失敗しました。ログ: {}",
+                        log_path.display()
+                    )
+                })?;
+
+                retry_phase.finish_and_clear();
+
+                if !retry_success {
+                    bail!(
+                        "HEVC変換に失敗しました (CPUフォールバック含む)。ログ: {}",
+                        log_path.display()
+                    );
+                }
+            } else {
+                bail!("HEVC変換に失敗しました。ログ: {}", log_path.display());
+            }
+        }
+
+        // HEVC 変換成功: ソースファイル (AV1/Opus) を削除
+        if output_path != final_output_path {
+            let _ = fs::remove_file(&output_path);
+            append_log(
+                &log_path,
+                &format!("[hevc] source removed: {}", output_path.display()),
+            );
+        }
+    }
+
     append_log(&log_path, "=== rust-download mode done ===");
 
     if !config.quiet {
-        println!("[flow] 5/5 完了");
+        println!("[flow] {}/{} 完了", total_phases, total_phases);
         println!("\n✓ Rustダウンロードが完了しました。\n");
     }
 

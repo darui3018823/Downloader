@@ -2,6 +2,7 @@ mod benchmark;
 mod cli;
 mod config;
 mod download;
+mod gpu;
 mod platform;
 mod progress;
 mod rust_download;
@@ -45,6 +46,14 @@ fn main() -> Result<()> {
         }
     }
 
+    if cli.ten_bit && !cli.hevc {
+        bail!("--10bit は --hevc と一緒に指定してください");
+    }
+
+    if cli.mp4_compat && cli.hevc {
+        bail!("--mp4-compat と --hevc は同時に指定できません（--hevc はAV1ソースからの変換を前提としています）");
+    }
+
     if cli.benchmark {
         if cli.url.is_none() {
             bail!("--benchmark は --url と一緒に指定してください");
@@ -80,7 +89,7 @@ fn main() -> Result<()> {
     }
 
     if !cli.quiet {
-        println!("=== yt-dlp Video Downloader v2-rc-4 ===\n");
+        println!("=== yt-dlp Video Downloader v2-rc-5 ===\n");
     }
 
     // yt-dlpの確保

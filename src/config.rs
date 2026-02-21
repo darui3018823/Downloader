@@ -30,6 +30,9 @@ pub struct DownloadConfig {
     pub rust_chunk_workers: Option<usize>,
     pub rust_runtime_threads: Option<usize>,
     pub rust_max_perf: bool,
+    pub mp4_compat: bool,
+    pub hevc: bool,
+    pub ten_bit: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -62,6 +65,9 @@ impl DownloadConfig {
             rust_chunk_workers: cli.rust_chunk_workers,
             rust_runtime_threads: cli.rust_runtime_threads,
             rust_max_perf: cli.rust_max_perf,
+            mp4_compat: cli.mp4_compat,
+            hevc: cli.hevc,
+            ten_bit: cli.ten_bit,
         }
     }
 

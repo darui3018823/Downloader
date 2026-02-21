@@ -27,7 +27,7 @@ pub fn parse_threads(value: &str) -> std::result::Result<usize, String> {
 /// yt-dlpを使用した動画ダウンローダー
 #[derive(Parser)]
 #[command(name = "downloader")]
-#[command(version = "2.0.0-rc-4")]
+#[command(version = "2.0.0-rc-5")]
 #[command(about = "yt-dlpを使用した動画ダウンローダー", long_about = None)]
 pub struct Cli {
     /// 単一URLをダウンロードして終了
@@ -126,6 +126,18 @@ pub struct Cli {
     /// Rustダウンロードを全力設定で実行（CPU/並列を強める）
     #[arg(long)]
     pub rust_max_perf: bool,
+
+    /// MP4互換モード (H.264/AAC) でダウンロード
+    #[arg(long)]
+    pub mp4_compat: bool,
+
+    /// ダウンロード後にHEVC (H.265) に再エンコード（GPU加速対応）
+    #[arg(long)]
+    pub hevc: bool,
+
+    /// HEVC 10-bit (p010le) 出力を有効化（--hevc 必須）
+    #[arg(long = "10bit")]
+    pub ten_bit: bool,
 
     /// クレジット情報を表示
     #[arg(long)]

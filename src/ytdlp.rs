@@ -128,24 +128,29 @@ pub fn build_command(
             "best" => "bestvideo+bestaudio",
             q => q, // 1080p, 720p, etc.
         }
-    } else {
-        // プラットフォーム別のデフォルト画質
+    } else if config.mp4_compat {
+        // MP4互換モード: H.264/AACを優先
         match platform {
             Platform::Twitch => "1080p60+bestaudio",
-            Platform::YouTube => "bestvideo+bestaudio",
-            Platform::Twitter => "bestvideo+bestaudio/best",
-            Platform::Niconico => "bestvideo+bestaudio/best",
             Platform::SoundCloud => "bestaudio/best",
-            Platform::Instagram => "bestvideo+bestaudio/best",
-            Platform::TikTok => "bestvideo+bestaudio/best",
-            Platform::Bilibili => "bv*+ba/b",
-            Platform::Generic => "bv*+ba/b",
+            _ => "bestvideo[vcodec^=avc]+bestaudio[acodec^=mp4a]/bestvideo+bestaudio/best",
+        }
+    } else {
+        // デフォルト: yt-dlp の最高効率（AV1/Opus等）
+        match platform {
+            Platform::Twitch => "1080p60+bestaudio",
+            Platform::SoundCloud => "bestaudio/best",
+            _ => "bestvideo+bestaudio/best",
         }
     };
 
     cmd.args(["-f", format_arg]);
     if !matches!(platform, Platform::SoundCloud) {
-        cmd.args(["--merge-output-format", &config.format]);
+        if config.mp4_compat {
+            cmd.args(["--merge-output-format", "mp4"]);
+        } else {
+            cmd.args(["--merge-output-format", &config.format]);
+        }
     }
 
     // メタデータ
