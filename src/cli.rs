@@ -130,4 +130,8 @@ pub struct Cli {
     /// クレジット情報を表示
     #[arg(long)]
     pub credit: bool,
+
+    /// 同一URLでyt-dlp vs Rustの速度ベンチマーク（--url 専用）
+    #[arg(long)]
+    pub benchmark: bool,
 }

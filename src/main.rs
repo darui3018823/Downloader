@@ -1,3 +1,4 @@
+mod benchmark;
 mod cli;
 mod config;
 mod download;
@@ -11,6 +12,7 @@ mod ytdlp;
 use anyhow::{bail, Result};
 use clap::Parser;
 
+use crate::benchmark::run_benchmark;
 use crate::cli::Cli;
 use crate::config::DownloadConfig;
 use crate::download::{download_batch, download_single, interactive_loop};
@@ -29,9 +31,9 @@ fn main() -> Result<()> {
         bail!("--update と --update-ytdlp は同時に指定できません");
     }
 
-    if has_rust_perf_flags && !cli.rust_download {
+    if has_rust_perf_flags && !cli.rust_download && !cli.benchmark {
         bail!(
-            "--rust-chunk-mb / --rust-chunk-workers / --rust-runtime-threads / --rust-max-perf は --rust-download と一緒に指定してください"
+            "--rust-chunk-mb / --rust-chunk-workers / --rust-runtime-threads / --rust-max-perf は --rust-download または --benchmark と一緒に指定してください"
         );
     }
 
@@ -39,6 +41,20 @@ fn main() -> Result<()> {
         if cli.urls.is_some() || cli.url.is_none() {
             bail!(
                 "--rust-download は --url の単一モード専用です（切り分け目的のためフォールバックなし）。ハング/失敗時は --rust-download を外してください"
+            );
+        }
+    }
+
+    if cli.benchmark {
+        if cli.url.is_none() {
+            bail!("--benchmark は --url と一緒に指定してください");
+        }
+        if cli.urls.is_some() {
+            bail!("--benchmark は --urls と同時に指定できません");
+        }
+        if cli.rust_download {
+            bail!(
+                "--benchmark は --rust-download と同時に指定できません（両方を内部で実行します）"
             );
         }
     }
@@ -76,6 +92,12 @@ fn main() -> Result<()> {
 
     // ダウンロード設定を作成
     let config = DownloadConfig::from_cli(&cli);
+
+    // ベンチマークモード
+    if cli.benchmark {
+        let url = cli.url.as_deref().unwrap();
+        return run_benchmark(&ytdlp_path, url, &config);
+    }
 
     // モード判定と実行
     match (cli.url, cli.urls) {
