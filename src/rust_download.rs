@@ -255,7 +255,7 @@ fn extract_candidate_from_json(
     if let (Some(video), Some(audio)) = (video_stream, audio_stream) {
         return Ok(RustDownloadCandidate {
             title,
-            output_ext: single_stream.ext.clone(),
+            output_ext: video.ext.clone(),
             single_stream: None,
             video_stream: Some(video),
             audio_stream: Some(audio),
@@ -919,15 +919,6 @@ fn ffmpeg_hevc_transcode(
     show_progress: bool,
     has_thumbnail: bool,
 ) -> Result<bool> {
-    input_path: &Path,
-    output_path: &Path,
-    log_path: &Path,
-    encoder: GpuEncoder,
-    ten_bit: bool,
-    meta: &MediaMetadata,
-    quiet: bool,
-    show_progress: bool,
-) -> Result<bool> {
     let duration_secs = get_media_duration_secs(input_path, log_path);
 
     let mut cmd = Command::new("ffmpeg");
@@ -1334,7 +1325,6 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
             thumbnail_path.is_some(),
         )
         .with_context(|| format!("HEVC変換の実行に失敗しました。ログ: {}", log_path.display()))?;
-        .with_context(|| format!("HEVC変換の実行に失敗しました。ログ: {}", log_path.display()))?;
 
         transcode_phase.finish_and_clear();
 
@@ -1366,6 +1356,7 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
                     &media_meta,
                     config.quiet,
                     !config.quiet,
+                    thumbnail_path.is_some(),
                 )
                 .with_context(|| {
                     format!(
