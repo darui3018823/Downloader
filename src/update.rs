@@ -9,7 +9,7 @@ use std::time::Duration;
 /// クレジット情報を表示
 pub fn show_credits() {
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║                 Video Downloader v2-rc-1                     ║");
+    println!("║                 Video Downloader v2-rc-2                     ║");
     println!("╠══════════════════════════════════════════════════════════════╣");
     println!("║  A Rust-based video downloader powered by yt-dlp             ║");
     println!("║                                                              ║");
@@ -30,7 +30,8 @@ pub fn show_credits() {
     println!("║                v2-beta5 - Async range perf tuning            ║");
     println!("║                v2-beta6 - Robust range fallback              ║");
     println!("║                v2-beta7 - Max perf tuning options            ║");
-    println!("║                v2-rc-1   - --dev flag, progress UI           ║");
+    println!("║                v2-rc-1  - --dev flag, progress UI            ║");
+    println!("║                v2-rc-2  - --benchmark, metadata embed        ║");
     println!("║                                                              ║");
     println!("║  Powered by:                                                 ║");
     println!("║    • yt-dlp (https://github.com/yt-dlp/yt-dlp)               ║");
