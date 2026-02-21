@@ -1149,9 +1149,8 @@ async fn rust_download_stream(
         progress_bar.set_message(format!("{} (size unknown)", progress_bar.message()));
     }
 
-    if head_response.status().is_success() && accept_ranges {
-        let total =
-            total_size.context("Rangeダウンロード可能ですがContent-Lengthが取得できません")?;
+    if head_response.status().is_success() && accept_ranges && total_size.is_some() {
+        let total = total_size.unwrap_or(0);
         let mut file = tokio::fs::File::create(output_path)
             .await
             .with_context(|| {
