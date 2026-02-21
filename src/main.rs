@@ -80,7 +80,7 @@ fn main() -> Result<()> {
     }
 
     if !cli.quiet {
-        println!("=== yt-dlp Video Downloader v2-rc-2 ===\n");
+        println!("=== yt-dlp Video Downloader v2-rc-3 ===\n");
     }
 
     // yt-dlpの確保

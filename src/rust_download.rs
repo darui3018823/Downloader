@@ -45,6 +45,8 @@ struct MediaMetadata {
     description: Option<String>,
     upload_date: Option<String>,
     thumbnail_url: Option<String>,
+    webpage_url: Option<String>,
+    genre: Option<String>,
 }
 
 fn is_stream_protocol(protocol: &str) -> bool {
@@ -676,12 +678,24 @@ fn extract_metadata_from_json(metadata: &Value) -> MediaMetadata {
                 .map(String::from)
         });
 
+    let webpage_url = metadata
+        .get("webpage_url")
+        .or_else(|| metadata.get("url"))
+        .and_then(Value::as_str)
+        .map(String::from);
+    let genre = metadata
+        .get("genre")
+        .and_then(Value::as_str)
+        .map(String::from);
+
     MediaMetadata {
         title,
         artist,
         description,
         upload_date,
         thumbnail_url,
+        webpage_url,
+        genre,
     }
 }
 
@@ -744,18 +758,21 @@ fn add_metadata_args(cmd: &mut Command, meta: &MediaMetadata) {
     if let Some(ref artist) = meta.artist {
         cmd.args(["-metadata", &format!("artist={}", artist)]);
     }
+    if let Some(ref url) = meta.webpage_url {
+        cmd.args(["-metadata", &format!("comment={}", url)]);
+    }
     if let Some(ref desc) = meta.description {
-        // descriptionが長すぎる場合は最初の500文字に制限
-        let comment = if desc.len() > 500 {
-            format!("{}...", &desc[..497])
-        } else {
-            desc.clone()
-        };
-        cmd.args(["-metadata", &format!("comment={}", comment)]);
+        cmd.args(["-metadata", &format!("description={}", desc)]);
+        cmd.args(["-metadata", &format!("synopsis={}", desc)]);
     }
     if let Some(ref date) = meta.upload_date {
         cmd.args(["-metadata", &format!("date={}", date)]);
     }
+    if let Some(ref genre) = meta.genre {
+        cmd.args(["-metadata", &format!("genre={}", genre)]);
+    }
+    // 音声ストリームの言語を日本語に設定
+    cmd.args(["-metadata:s:a:0", "language=jpn"]);
 }
 
 fn ffmpeg_merge_streams(
