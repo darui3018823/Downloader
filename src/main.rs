@@ -138,7 +138,7 @@ fn make_phase_spinner(quiet: bool) -> Result<ProgressBar> {
 /// yt-dlpを使用した動画ダウンローダー
 #[derive(Parser)]
 #[command(name = "downloader")]
-#[command(version = "2.0.0-beta.6")]
+#[command(version = "2.0.0-beta.7")]
 #[command(about = "yt-dlpを使用した動画ダウンローダー", long_about = None)]
 struct Cli {
     /// 単一URLをダウンロードして終了
@@ -338,7 +338,7 @@ impl DownloadConfig {
 /// クレジット情報を表示
 fn show_credits() {
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║                 Video Downloader v2-beta6                    ║");
+    println!("║                 Video Downloader v2-beta7                    ║");
     println!("╠══════════════════════════════════════════════════════════════╣");
     println!("║  A Rust-based video downloader powered by yt-dlp             ║");
     println!("║                                                              ║");
@@ -358,6 +358,7 @@ fn show_credits() {
     println!("║                v2-beta4 - Parallel progress output           ║");
     println!("║                v2-beta5 - Async range perf tuning            ║");
     println!("║                v2-beta6 - Robust range fallback              ║");
+    println!("║                v2-beta7 - Max perf tuning options            ║");
     println!("║                                                              ║");
     println!("║  Powered by:                                                 ║");
     println!("║    • yt-dlp (https://github.com/yt-dlp/yt-dlp)               ║");
@@ -1726,7 +1727,7 @@ fn main() -> Result<()> {
     }
 
     if !cli.quiet {
-        println!("=== yt-dlp Video Downloader v2-beta6 ===\n");
+        println!("=== yt-dlp Video Downloader v2-beta7 ===\n");
     }
 
     // yt-dlpの確保

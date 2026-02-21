@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [v2-beta7] - 2026-02-21
+
+### Added
+- Added high-performance tuning options for `--rust-download`: `--rust-max-perf`, `--rust-chunk-mb`, `--rust-chunk-workers`, and `--rust-runtime-threads`.
+
+### Improved
+- Replaced fixed Rust downloader chunk/runtime values with configurable tuning resolved at runtime.
+- Added startup display of effective Rust tuning values in `--rust-download` mode.
+
 ## [v2-beta6] - 2026-02-21
 
 ### Fixed
