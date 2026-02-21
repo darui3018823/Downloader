@@ -511,7 +511,7 @@ async fn rust_download_stream(
         );
     }
 
-    if head_response.status().is_success() && total_size.is_some() {
+    if head_response.status().is_success() && total_size.is_some() && accept_ranges {
         let total = total_size.unwrap_or(0);
         let mut file = tokio::fs::File::create(output_path)
             .await
