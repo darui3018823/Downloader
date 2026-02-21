@@ -1,4 +1,3 @@
-/// プラットフォームを検出
 #[derive(Debug)]
 pub enum Platform {
     Twitch,

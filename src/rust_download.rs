@@ -916,6 +916,7 @@ fn ffmpeg_hevc_transcode(
     ten_bit: bool,
     meta: &MediaMetadata,
     quiet: bool,
+    show_progress: bool,
 ) -> Result<bool> {
     let duration_secs = get_media_duration_secs(input_path, log_path);
 
@@ -923,31 +924,15 @@ fn ffmpeg_hevc_transcode(
     cmd.args(["-hide_banner", "-y"]);
 
     // GPU エンコーダ固有の引数（hwaccel等は入力より前に指定）
-    let encode_args = encoder.build_encode_args(ten_bit);
-
-    // hwaccel 関連の引数は -i より前に配置
-    let mut pre_input_args: Vec<&str> = Vec::new();
-    let mut post_input_args: Vec<&str> = Vec::new();
-    let mut iter = encode_args.iter();
-    let mut before_encoder = true;
-    while let Some(arg) = iter.next() {
-        if arg == "-c:v" {
-            before_encoder = false;
-        }
-        if before_encoder {
-            pre_input_args.push(arg);
-        } else {
-            post_input_args.push(arg);
-        }
-    }
-
-    for arg in &pre_input_args {
+    let hwaccel_args = encoder.hwaccel_args();
+    for arg in &hwaccel_args {
         cmd.arg(arg);
     }
 
     cmd.args(["-i", &input_path.to_string_lossy()]);
 
-    for arg in &post_input_args {
+    let encode_args = encoder.build_encode_args(ten_bit);
+    for arg in &encode_args {
         cmd.arg(arg);
     }
 
@@ -973,7 +958,7 @@ fn ffmpeg_hevc_transcode(
     let mut child = cmd.spawn().context("FFmpeg HEVC変換の起動に失敗しました")?;
 
     // プログレスバー
-    let pb = if quiet {
+    let pb = if !show_progress {
         ProgressBar::hidden()
     } else {
         let pb = ProgressBar::new(100);
@@ -1333,6 +1318,7 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
             config.ten_bit,
             &media_meta,
             config.quiet,
+            !config.quiet,
         )
         .with_context(|| format!("HEVC変換の実行に失敗しました。ログ: {}", log_path.display()))?;
 
@@ -1365,6 +1351,7 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
                     config.ten_bit,
                     &media_meta,
                     config.quiet,
+                    !config.quiet,
                 )
                 .with_context(|| {
                     format!(

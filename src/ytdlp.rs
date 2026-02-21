@@ -5,7 +5,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// yt-dlpバイナリのパスを取得または自動ダウンロード
 pub fn ensure_ytdlp(force_update: bool) -> Result<PathBuf> {
     let binaries_dir = PathBuf::from("./binaries");
     let ytdlp_path = binaries_dir.join(if cfg!(windows) {
@@ -14,13 +13,11 @@ pub fn ensure_ytdlp(force_update: bool) -> Result<PathBuf> {
         "yt-dlp"
     });
 
-    // 強制更新の場合は既存ファイルを削除
     if force_update && ytdlp_path.exists() {
         println!("既存のyt-dlpを削除しています...");
         fs::remove_file(&ytdlp_path).context("既存ファイルの削除に失敗しました")?;
     }
 
-    // まず環境のPATHからyt-dlpを探す（更新時を除く）
     if !force_update {
         if let Ok(output) = Command::new("yt-dlp").arg("--version").output() {
             if output.status.success() {
@@ -30,13 +27,11 @@ pub fn ensure_ytdlp(force_update: bool) -> Result<PathBuf> {
         }
     }
 
-    // ローカルバイナリを確認
     if ytdlp_path.exists() && !force_update {
         println!("✓ {}からyt-dlpを検出しました", ytdlp_path.display());
         return Ok(ytdlp_path);
     }
 
-    // GitHubからダウンロード
     if force_update {
         println!("yt-dlpを最新バージョンに更新しています...");
     } else {
@@ -47,12 +42,9 @@ pub fn ensure_ytdlp(force_update: bool) -> Result<PathBuf> {
     Ok(ytdlp_path)
 }
 
-/// GitHubのReleasesからyt-dlpをダウンロード
 fn download_ytdlp(binaries_dir: &Path, ytdlp_path: &Path) -> Result<()> {
-    // binariesディレクトリを作成
     fs::create_dir_all(binaries_dir).context("binariesディレクトリの作成に失敗しました")?;
 
-    // プラットフォームに応じたダウンロードURL
     let download_url = if cfg!(windows) {
         "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
     } else if cfg!(target_os = "macos") {
@@ -63,7 +55,6 @@ fn download_ytdlp(binaries_dir: &Path, ytdlp_path: &Path) -> Result<()> {
 
     println!("ダウンロード中: {}", download_url);
 
-    // ファイルをダウンロード
     let response =
         reqwest::blocking::get(download_url).context("yt-dlpのダウンロードに失敗しました")?;
 
@@ -75,10 +66,8 @@ fn download_ytdlp(binaries_dir: &Path, ytdlp_path: &Path) -> Result<()> {
         .bytes()
         .context("レスポンスの読み取りに失敗しました")?;
 
-    // ファイルに書き込み
     fs::write(ytdlp_path, &bytes).context("yt-dlpの保存に失敗しました")?;
 
-    // Unix系OSの場合、実行権限を付与
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -91,7 +80,6 @@ fn download_ytdlp(binaries_dir: &Path, ytdlp_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// プラットフォームに応じたyt-dlpコマンドを構築
 pub fn build_command(
     ytdlp_path: &Path,
     platform: Platform,
@@ -100,19 +88,16 @@ pub fn build_command(
 ) -> Command {
     let mut cmd = Command::new(ytdlp_path);
 
-    // 出力先ディレクトリを作成
     if let Err(e) = fs::create_dir_all(&config.output_dir) {
         eprintln!("警告: 出力ディレクトリの作成に失敗: {}", e);
     }
 
     let output_template = format!("{}/%(title)s.%(ext)s", config.output_dir);
 
-    // 音声のみモード
     if config.audio_only {
         cmd.args(["-x", "--audio-format", "mp3"]);
         cmd.args(["--output", &output_template, url]);
 
-        // 詳細ログ / 静寂モード
         if config.verbose {
             cmd.arg("--verbose");
         } else if config.quiet {
@@ -122,21 +107,18 @@ pub fn build_command(
         return cmd;
     }
 
-    // 画質指定
     let format_arg = if let Some(quality) = &config.quality {
         match quality.as_str() {
             "best" => "bestvideo+bestaudio",
             q => q, // 1080p, 720p, etc.
         }
     } else if config.mp4_compat {
-        // MP4互換モード: H.264/AACを優先
         match platform {
             Platform::Twitch => "1080p60+bestaudio",
             Platform::SoundCloud => "bestaudio/best",
             _ => "bestvideo[vcodec^=avc]+bestaudio[acodec^=mp4a]/bestvideo+bestaudio/best",
         }
     } else {
-        // デフォルト: yt-dlp の最高効率（AV1/Opus等）
         match platform {
             Platform::Twitch => "1080p60+bestaudio",
             Platform::SoundCloud => "bestaudio/best",
@@ -153,22 +135,18 @@ pub fn build_command(
         }
     }
 
-    // メタデータ
     if !config.no_metadata {
         cmd.args(["--embed-thumbnail", "--add-metadata"]);
     }
 
-    // クッキー（指定された場合のみ）
     if let Some(ref cookies) = config.cookies {
         cmd.args(["--cookies-from-browser", cookies]);
     }
 
-    // プレイリスト
     if !config.playlist {
         cmd.arg("--no-playlist");
     }
 
-    // プラットフォーム固有の設定
     match platform {
         Platform::YouTube => {
             cmd.args(["-4", "--geo-bypass-country", "JP"]);
@@ -210,7 +188,6 @@ pub fn build_command(
         _ => {}
     }
 
-    // 詳細ログ / 静寂モード
     if config.verbose {
         cmd.arg("--verbose");
     } else if config.quiet {

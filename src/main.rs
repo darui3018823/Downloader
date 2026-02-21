@@ -68,20 +68,17 @@ fn main() -> Result<()> {
         }
     }
 
-    // クレジット表示モード
     if cli.credit {
         show_credits();
         return Ok(());
     }
 
-    // 自己更新モード
     if cli.update {
         println!("最新Releaseバイナリへ更新しています...");
         update_release_binary()?;
         return Ok(());
     }
 
-    // yt-dlp更新モード
     if cli.update_ytdlp {
         ensure_ytdlp(true)?;
         println!("\nyt-dlpの更新が完了しました。");
@@ -92,34 +89,27 @@ fn main() -> Result<()> {
         println!("=== yt-dlp Video Downloader v2-rc-5 ===\n");
     }
 
-    // yt-dlpの確保
     let ytdlp_path = ensure_ytdlp(false)?;
 
     if !cli.quiet {
         println!();
     }
 
-    // ダウンロード設定を作成
     let config = DownloadConfig::from_cli(&cli);
 
-    // ベンチマークモード
     if cli.benchmark {
         let url = cli.url.as_deref().unwrap();
         return run_benchmark(&ytdlp_path, url, &config);
     }
 
-    // モード判定と実行
     match (cli.url, cli.urls) {
         (Some(url), None) => {
-            // 単一URLモード
             download_single(&ytdlp_path, &url, &config)?;
         }
         (None, Some(urls)) => {
-            // バッチモード
             download_batch(&ytdlp_path, &urls, &config)?;
         }
         (None, None) => {
-            // 対話的ループモード
             interactive_loop(&ytdlp_path, &config)?;
         }
         (Some(_), Some(_)) => {

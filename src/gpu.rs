@@ -2,21 +2,15 @@ use anyhow::{bail, Context, Result};
 use std::io::{self, BufRead, Write};
 use std::process::Command;
 
-/// GPU エンコーダの種類
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuEncoder {
-    /// NVIDIA NVENC (hevc_nvenc) + cuda hwaccel
     Nvenc,
-    /// NVIDIA NVENC (hevc_nvenc) + auto fallback hwaccel
     NvencFallback,
-    /// AMD AMF (hevc_amf)
     Amf,
-    /// CPU ソフトウェア (libx265)
     Cpu,
 }
 
 impl GpuEncoder {
-    /// FFmpeg エンコーダ名
     pub fn encoder_name(&self) -> &'static str {
         match self {
             GpuEncoder::Nvenc | GpuEncoder::NvencFallback => "hevc_nvenc",
@@ -25,13 +19,11 @@ impl GpuEncoder {
         }
     }
 
-    /// FFmpeg エンコード引数を構築
-    pub fn build_encode_args(&self, ten_bit: bool) -> Vec<String> {
+    pub fn hwaccel_args(&self) -> Vec<String> {
         let mut args: Vec<String> = Vec::new();
 
         match self {
             GpuEncoder::Nvenc => {
-                // NVENC: 最速の完全ハードウェア処理
                 args.extend([
                     "-hwaccel".into(),
                     "cuda".into(),
@@ -40,20 +32,18 @@ impl GpuEncoder {
                 ]);
             }
             GpuEncoder::NvencFallback => {
-                // NVENC (互換): hwaccel auto で安全にデコード高速化
                 args.extend(["-hwaccel".into(), "auto".into()]);
             }
-            GpuEncoder::Amf | GpuEncoder::Cpu => {
-                // AMF / CPU はhwaccel不要
-            }
+            GpuEncoder::Amf | GpuEncoder::Cpu => {}
         }
+        args
+    }
 
-        // 入力は呼び出し側で追加
+    pub fn build_encode_args(&self, ten_bit: bool) -> Vec<String> {
+        let mut args: Vec<String> = Vec::new();
 
-        // エンコーダ指定
         args.extend(["-c:v".into(), self.encoder_name().into()]);
 
-        // エンコーダ固有パラメータ
         match self {
             GpuEncoder::Nvenc | GpuEncoder::NvencFallback => {
                 args.extend([
@@ -110,14 +100,12 @@ impl GpuEncoder {
             }
         }
 
-        // 音声: AAC 192k
         args.extend(["-c:a".into(), "aac".into(), "-b:a".into(), "192k".into()]);
 
         args
     }
 }
 
-/// ffmpeg -encoders の出力からエンコーダの有無を判定
 fn check_encoder_available(encoder_name: &str) -> bool {
     let output = Command::new("ffmpeg")
         .args(["-hide_banner", "-encoders"])
@@ -132,9 +120,7 @@ fn check_encoder_available(encoder_name: &str) -> bool {
     }
 }
 
-/// GPU エンコーダを検出してフォールバック
 pub fn detect_gpu_encoder(quiet: bool) -> Result<GpuEncoder> {
-    // NVIDIA (hevc_nvenc) を優先チェック
     if check_encoder_available("hevc_nvenc") {
         if !quiet {
             println!("✓ NVIDIA GPU検出: hevc_nvenc を使用します");
@@ -142,7 +128,6 @@ pub fn detect_gpu_encoder(quiet: bool) -> Result<GpuEncoder> {
         return Ok(GpuEncoder::Nvenc);
     }
 
-    // AMD (hevc_amf) チェック
     if check_encoder_available("hevc_amf") {
         if !quiet {
             println!("✓ AMD GPU検出: hevc_amf を使用します");
@@ -150,9 +135,7 @@ pub fn detect_gpu_encoder(quiet: bool) -> Result<GpuEncoder> {
         return Ok(GpuEncoder::Amf);
     }
 
-    // GPU が見つからない場合の CPU フォールバック
     if quiet {
-        // quiet モードでは自動的に CPU にフォールバック
         return Ok(GpuEncoder::Cpu);
     }
 
@@ -179,13 +162,11 @@ pub fn detect_gpu_encoder(quiet: bool) -> Result<GpuEncoder> {
     }
 }
 
-/// GPU エンコーダでの HEVC 変換が失敗した場合にフォールバックを試みる
 pub fn try_encoder_fallback(
     original_encoder: GpuEncoder,
     quiet: bool,
 ) -> Result<Option<GpuEncoder>> {
     if original_encoder == GpuEncoder::Cpu {
-        // 既に CPU なのでフォールバック先なし
         return Ok(None);
     }
 

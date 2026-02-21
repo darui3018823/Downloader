@@ -17,7 +17,6 @@ pub fn sanitize_file_name(input: &str) -> String {
         .replace(':', "：")
         .replace('"', "＂");
 
-    // 制御文字を除去
     result.retain(|c| !c.is_control());
 
     result = result.trim().to_string();

@@ -7,20 +7,17 @@ use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::thread;
 
-/// URLをダウンロード
 pub fn download_url(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result<()> {
     if url.trim().is_empty() {
         return Ok(());
     }
 
-    // プラットフォームを検出
     let platform = Platform::detect(url);
 
     if !config.quiet {
         println!("検出されたプラットフォーム: {:?}", platform);
     }
 
-    // コマンドを構築して実行
     let cmd = build_command(ytdlp_path, platform, url, config);
 
     if !config.quiet {
@@ -36,7 +33,6 @@ pub fn download_url(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Re
     Ok(())
 }
 
-/// 単一URLモード
 pub fn download_single(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result<()> {
     if !config.quiet {
         println!("=== 単一URLモード ===\n");
@@ -49,7 +45,6 @@ pub fn download_single(ytdlp_path: &Path, url: &str, config: &DownloadConfig) ->
     download_url(ytdlp_path, url, config)
 }
 
-/// バッチモード
 pub fn download_batch(ytdlp_path: &Path, urls: &[String], config: &DownloadConfig) -> Result<()> {
     if !config.quiet {
         println!("=== バッチモード ({} URLs) ===\n", urls.len());
@@ -124,7 +119,6 @@ pub fn download_batch(ytdlp_path: &Path, urls: &[String], config: &DownloadConfi
     Ok(())
 }
 
-/// 対話的ループモード
 pub fn interactive_loop(ytdlp_path: &Path, config: &DownloadConfig) -> Result<()> {
     if !config.quiet {
         println!("=== 対話的モード ===");
@@ -144,7 +138,6 @@ pub fn interactive_loop(ytdlp_path: &Path, config: &DownloadConfig) -> Result<()
             Some(Ok(input)) => {
                 let input = input.trim();
 
-                // 終了コマンドチェック
                 if input.eq_ignore_ascii_case("exit") || input.eq_ignore_ascii_case("quit") {
                     if !config.quiet {
                         println!("終了します。");
@@ -152,12 +145,10 @@ pub fn interactive_loop(ytdlp_path: &Path, config: &DownloadConfig) -> Result<()
                     break;
                 }
 
-                // 空行はスキップ
                 if input.is_empty() {
                     continue;
                 }
 
-                // URLをダウンロード
                 if let Err(e) = download_url(ytdlp_path, input, config) {
                     eprintln!("エラー: {}", e);
                     if !config.quiet {
@@ -170,7 +161,6 @@ pub fn interactive_loop(ytdlp_path: &Path, config: &DownloadConfig) -> Result<()
                 break;
             }
             None => {
-                // EOF (Ctrl+D on Unix, Ctrl+Z on Windows) または Ctrl+C
                 if !config.quiet {
                     println!("\n終了します。");
                 }
