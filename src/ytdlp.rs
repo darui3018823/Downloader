@@ -86,7 +86,7 @@ pub fn build_command(
     platform: Platform,
     url: &str,
     config: &DownloadConfig,
-    is_live: bool,
+    _is_live: bool,
 ) -> Command {
     let mut cmd = Command::new(ytdlp_path);
 

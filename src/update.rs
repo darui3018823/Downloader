@@ -3,7 +3,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+// ...existing code...
 use std::time::Duration;
 
 pub fn show_credits() {

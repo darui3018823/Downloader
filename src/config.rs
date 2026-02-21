@@ -81,26 +81,20 @@ impl DownloadConfig {
         let max_perf_chunk_workers = (logical_cores * 4).max(8);
         let max_perf_runtime_threads = (logical_cores * 2).max(4);
 
-        let chunk_mb = self.rust_chunk_mb.unwrap_or_else(|| {
-            if self.rust_max_perf {
-                max_perf_chunk_mb
-            } else {
-                DEFAULT_RUST_CHUNK_SIZE_MB
-            }
+        let chunk_mb = self.rust_chunk_mb.unwrap_or(if self.rust_max_perf {
+            max_perf_chunk_mb
+        } else {
+            DEFAULT_RUST_CHUNK_SIZE_MB
         });
-        let chunk_workers = self.rust_chunk_workers.unwrap_or_else(|| {
-            if self.rust_max_perf {
-                max_perf_chunk_workers
-            } else {
-                DEFAULT_RUST_CHUNK_WORKERS
-            }
+        let chunk_workers = self.rust_chunk_workers.unwrap_or(if self.rust_max_perf {
+            max_perf_chunk_workers
+        } else {
+            DEFAULT_RUST_CHUNK_WORKERS
         });
-        let runtime_threads = self.rust_runtime_threads.unwrap_or_else(|| {
-            if self.rust_max_perf {
-                max_perf_runtime_threads
-            } else {
-                DEFAULT_RUST_RUNTIME_THREADS
-            }
+        let runtime_threads = self.rust_runtime_threads.unwrap_or(if self.rust_max_perf {
+            max_perf_runtime_threads
+        } else {
+            DEFAULT_RUST_RUNTIME_THREADS
         });
 
         RustDownloadTuning {

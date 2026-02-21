@@ -38,12 +38,11 @@ fn main() -> Result<()> {
         );
     }
 
-    if cli.rust_download {
-        if cli.urls.is_some() || cli.url.is_none() {
-            bail!(
-                "--rust-download は --url の単一モード専用です（切り分け目的のためフォールバックなし）。ハング/失敗時は --rust-download を外してください"
-            );
-        }
+    if cli.rust_download
+        && (cli.urls.is_some() || cli.url.is_none()) {
+        bail!(
+            "--rust-download は --url の単一モード専用です（切り分け目的のためフォールバックなし）。ハング/失敗時は --rust-download を外してください"
+        );
     }
 
     if cli.ten_bit && !cli.hevc {
