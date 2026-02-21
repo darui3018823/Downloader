@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## [v2-beta6] - 2026-02-21
+
+### Fixed
+- Fixed `--rust-download` failure path when `Accept-Ranges` is present but `Content-Length` is missing by falling back to streamed GET.
+
 ## [v2-beta5] - 2026-02-21
 
 ### Improved
