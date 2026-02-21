@@ -255,7 +255,7 @@ fn extract_candidate_from_json(
     if let (Some(video), Some(audio)) = (video_stream, audio_stream) {
         return Ok(RustDownloadCandidate {
             title,
-            output_ext: config.format.clone(),
+            output_ext: single_stream.ext.clone(),
             single_stream: None,
             video_stream: Some(video),
             audio_stream: Some(audio),
