@@ -38,6 +38,15 @@ struct RustDownloadCandidate {
     audio_stream: Option<RustMediaStream>,
 }
 
+#[derive(Debug, Clone)]
+struct MediaMetadata {
+    title: Option<String>,
+    artist: Option<String>,
+    description: Option<String>,
+    upload_date: Option<String>,
+    thumbnail_url: Option<String>,
+}
+
 fn is_stream_protocol(protocol: &str) -> bool {
     let lower = protocol.to_ascii_lowercase();
     lower.contains("m3u8")
@@ -469,7 +478,10 @@ async fn rust_download_stream(
     );
     append_log(
         log_path,
-        &format!("[download] json_filesize_approx: {:?}", stream.filesize_approx),
+        &format!(
+            "[download] json_filesize_approx: {:?}",
+            stream.filesize_approx
+        ),
     );
 
     if let Some(total) = total_size {
@@ -623,24 +635,158 @@ async fn rust_download_stream(
     Ok(())
 }
 
+fn extract_metadata_from_json(metadata: &Value) -> MediaMetadata {
+    let title = metadata
+        .get("title")
+        .and_then(Value::as_str)
+        .map(String::from);
+    let artist = metadata
+        .get("uploader")
+        .or_else(|| metadata.get("artist"))
+        .and_then(Value::as_str)
+        .map(String::from);
+    let description = metadata
+        .get("description")
+        .and_then(Value::as_str)
+        .map(String::from);
+    let upload_date = metadata
+        .get("upload_date")
+        .and_then(Value::as_str)
+        .map(String::from);
+
+    // サムネイルURL: thumbnails配列から最高画質を選択、なければthumbnailフィールド
+    let thumbnail_url = metadata
+        .get("thumbnails")
+        .and_then(Value::as_array)
+        .and_then(|arr| {
+            arr.iter()
+                .filter_map(|t| {
+                    let url = t.get("url")?.as_str()?;
+                    let preference = t.get("preference").and_then(Value::as_i64).unwrap_or(0);
+                    let width = t.get("width").and_then(Value::as_u64).unwrap_or(0);
+                    Some((url.to_string(), preference, width))
+                })
+                .max_by_key(|(_, pref, w)| (*pref, *w))
+                .map(|(url, _, _)| url)
+        })
+        .or_else(|| {
+            metadata
+                .get("thumbnail")
+                .and_then(Value::as_str)
+                .map(String::from)
+        });
+
+    MediaMetadata {
+        title,
+        artist,
+        description,
+        upload_date,
+        thumbnail_url,
+    }
+}
+
+async fn download_thumbnail(url: &str, output_path: &Path, log_path: &Path) -> Result<PathBuf> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(60))
+        .build()
+        .context("サムネイルDL用HTTPクライアントの作成に失敗しました")?;
+
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .context("サムネイルのダウンロードに失敗しました")?;
+
+    if !response.status().is_success() {
+        bail!("サムネイルDLエラー: ステータス {}", response.status());
+    }
+
+    // 拡張子をContent-TypeまたはURLから推定
+    let ext = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|ct| match ct {
+            c if c.contains("jpeg") || c.contains("jpg") => Some("jpg"),
+            c if c.contains("png") => Some("png"),
+            c if c.contains("webp") => Some("webp"),
+            _ => None,
+        })
+        .unwrap_or("jpg");
+
+    let thumb_path = output_path.with_extension(format!("thumb.{}", ext));
+    let bytes = response
+        .bytes()
+        .await
+        .context("サムネイルデータ読み取りに失敗しました")?;
+    tokio::fs::write(&thumb_path, &bytes)
+        .await
+        .context("サムネイルの保存に失敗しました")?;
+
+    append_log(
+        log_path,
+        &format!(
+            "[thumbnail] downloaded {} -> {} ({} bytes)",
+            url,
+            thumb_path.display(),
+            bytes.len()
+        ),
+    );
+
+    Ok(thumb_path)
+}
+
+fn add_metadata_args(cmd: &mut Command, meta: &MediaMetadata) {
+    if let Some(ref title) = meta.title {
+        cmd.args(["-metadata", &format!("title={}", title)]);
+    }
+    if let Some(ref artist) = meta.artist {
+        cmd.args(["-metadata", &format!("artist={}", artist)]);
+    }
+    if let Some(ref desc) = meta.description {
+        // descriptionが長すぎる場合は最初の500文字に制限
+        let comment = if desc.len() > 500 {
+            format!("{}...", &desc[..497])
+        } else {
+            desc.clone()
+        };
+        cmd.args(["-metadata", &format!("comment={}", comment)]);
+    }
+    if let Some(ref date) = meta.upload_date {
+        cmd.args(["-metadata", &format!("date={}", date)]);
+    }
+}
+
 fn ffmpeg_merge_streams(
     video_path: &Path,
     audio_path: &Path,
     output_path: &Path,
     log_path: &Path,
+    meta: &MediaMetadata,
+    thumbnail_path: Option<&Path>,
 ) -> Result<()> {
     let mut cmd = Command::new("ffmpeg");
-    cmd.args([
-        "-hide_banner",
-        "-y",
-        "-i",
-        &video_path.to_string_lossy(),
-        "-i",
-        &audio_path.to_string_lossy(),
-        "-c",
-        "copy",
-        &output_path.to_string_lossy(),
-    ]);
+    cmd.args(["-hide_banner", "-y"]);
+
+    // 入力ストリーム
+    cmd.args(["-i", &video_path.to_string_lossy()]);
+    cmd.args(["-i", &audio_path.to_string_lossy()]);
+
+    if let Some(thumb) = thumbnail_path {
+        cmd.args(["-i", &thumb.to_string_lossy()]);
+        // マッピング: video(0) + audio(1) + thumbnail(2)
+        cmd.args(["-map", "0:v", "-map", "1:a", "-map", "2:v"]);
+        cmd.args(["-c:v:0", "copy", "-c:a", "copy"]);
+        cmd.args(["-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic"]);
+    } else {
+        cmd.args(["-c", "copy"]);
+    }
+
+    // メタデータタグ
+    add_metadata_args(&mut cmd, meta);
+
+    cmd.arg(output_path.as_os_str());
 
     append_log(log_path, &format!("[ffmpeg] command: {:?}", cmd));
     let output = cmd.output().context("ffmpeg結合の実行に失敗しました")?;
@@ -666,6 +812,58 @@ fn ffmpeg_merge_streams(
     Ok(())
 }
 
+/// 単一ストリームにメタデータ＋サムネイルを埋め込む（re-mux）
+fn ffmpeg_embed_metadata(
+    input_path: &Path,
+    output_path: &Path,
+    log_path: &Path,
+    meta: &MediaMetadata,
+    thumbnail_path: Option<&Path>,
+) -> Result<()> {
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-hide_banner", "-y"]);
+
+    cmd.args(["-i", &input_path.to_string_lossy()]);
+
+    if let Some(thumb) = thumbnail_path {
+        cmd.args(["-i", &thumb.to_string_lossy()]);
+        cmd.args(["-map", "0", "-map", "1:v"]);
+        cmd.args(["-c", "copy"]);
+        cmd.args(["-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic"]);
+    } else {
+        cmd.args(["-c", "copy"]);
+    }
+
+    add_metadata_args(&mut cmd, meta);
+
+    cmd.arg(output_path.as_os_str());
+
+    append_log(log_path, &format!("[ffmpeg-embed] command: {:?}", cmd));
+    let output = cmd
+        .output()
+        .context("ffmpegメタデータ埋め込みの実行に失敗しました")?;
+    append_log(
+        log_path,
+        &format!("[ffmpeg-embed] exit: {:?}", output.status.code()),
+    );
+    append_log(
+        log_path,
+        &format!(
+            "[ffmpeg-embed] stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    );
+
+    if !output.status.success() {
+        bail!(
+            "ffmpegメタデータ埋め込みに失敗しました (code: {:?})",
+            output.status.code()
+        );
+    }
+
+    Ok(())
+}
+
 pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result<()> {
     let log_path = new_error_log_path(url)?;
     append_log(&log_path, "=== rust-download mode start ===");
@@ -673,15 +871,17 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
     append_log(&log_path, &format!("[config] {:?}", config));
 
     let extract_phase = make_phase_spinner(config.quiet)?;
-    extract_phase.set_message("[flow] 1/4 抽出中...");
+    extract_phase.set_message("[flow] 1/5 抽出中...");
 
     let metadata = extract_with_ytdlp(ytdlp_path, url, config, &log_path)
         .with_context(|| format!("抽出処理に失敗しました。ログ: {}", log_path.display()))?;
     let candidate = extract_candidate_from_json(&metadata, config)
         .with_context(|| format!("抽出結果の解釈に失敗しました。ログ: {}", log_path.display()))?;
+    let media_meta = extract_metadata_from_json(&metadata);
     let tuning = config.resolve_rust_tuning();
 
     append_log(&log_path, &format!("[tuning] {:?}", tuning));
+    append_log(&log_path, &format!("[metadata] {:?}", media_meta));
     extract_phase.finish_and_clear();
 
     fs::create_dir_all(&config.output_dir).context("出力ディレクトリの作成に失敗しました")?;
@@ -708,6 +908,16 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
             candidate.audio_stream.is_some()
         ),
     );
+    dev_println(
+        config,
+        &format!(
+            "metadata title={:?} artist={:?} date={:?} thumb={}",
+            media_meta.title,
+            media_meta.artist,
+            media_meta.upload_date,
+            media_meta.thumbnail_url.is_some()
+        ),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(tuning.runtime_threads)
@@ -715,14 +925,45 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
         .build()
         .context("tokio runtimeの初期化に失敗しました")?;
 
+    // サムネイルを非同期でダウンロード（no_metadataでなければ）
+    let thumbnail_path: Option<PathBuf> = if !config.no_metadata {
+        if let Some(ref thumb_url) = media_meta.thumbnail_url {
+            dev_println(config, &format!("thumbnail DL: {}", thumb_url));
+            match runtime.block_on(download_thumbnail(thumb_url, &output_path, &log_path)) {
+                Ok(path) => {
+                    dev_println(config, &format!("thumbnail saved: {}", path.display()));
+                    Some(path)
+                }
+                Err(e) => {
+                    append_log(&log_path, &format!("[thumbnail] warning: {}", e));
+                    dev_println(config, &format!("thumbnail DL failed (non-fatal): {}", e));
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let embed_metadata = !config.no_metadata;
+
     if let Some(single_stream) = &candidate.single_stream {
+        // 単一ストリーム: DL → メタデータ埋め込み re-mux
+        let download_target = if embed_metadata {
+            output_path.with_extension("raw.tmp")
+        } else {
+            output_path.clone()
+        };
+
         let multi = MultiProgress::new();
         let single_pb = make_download_progress_bar(Some(&multi), "single", config.quiet)?;
 
         runtime
             .block_on(rust_download_stream(
                 single_stream,
-                &output_path,
+                &download_target,
                 &log_path,
                 single_pb,
                 tuning,
@@ -734,6 +975,23 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
                     log_path.display()
                 )
             })?;
+
+        if embed_metadata {
+            let embed_phase = make_phase_spinner(config.quiet)?;
+            embed_phase.set_message("[flow] 3/5 メタデータ埋め込み中...");
+
+            ffmpeg_embed_metadata(
+                &download_target,
+                &output_path,
+                &log_path,
+                &media_meta,
+                thumbnail_path.as_deref(),
+            )
+            .with_context(|| format!("メタデータ埋め込み失敗。ログ: {}", log_path.display()))?;
+            embed_phase.finish_and_clear();
+
+            let _ = fs::remove_file(&download_target);
+        }
     } else if let (Some(video_stream), Some(audio_stream)) =
         (&candidate.video_stream, &candidate.audio_stream)
     {
@@ -773,16 +1031,22 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
         })?;
 
         let merge_phase = make_phase_spinner(config.quiet)?;
-        merge_phase.set_message("[flow] 3/4 ffmpeg結合中...");
+        merge_phase.set_message("[flow] 3/5 ffmpeg結合 + メタデータ埋め込み中...");
 
-        ffmpeg_merge_streams(&temp_video, &temp_audio, &output_path, &log_path).with_context(
-            || {
-                format!(
-                    "ffmpeg結合失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
-                    log_path.display()
-                )
-            },
-        )?;
+        ffmpeg_merge_streams(
+            &temp_video,
+            &temp_audio,
+            &output_path,
+            &log_path,
+            &media_meta,
+            thumbnail_path.as_deref(),
+        )
+        .with_context(|| {
+            format!(
+                "ffmpeg結合失敗。ハング/失敗時は --rust-download を外してください。ログ: {}",
+                log_path.display()
+            )
+        })?;
         merge_phase.finish_and_clear();
 
         let _ = fs::remove_file(&temp_video);
@@ -793,12 +1057,15 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
         );
     }
 
+    // サムネイル一時ファイルのクリーンアップ
+    if let Some(ref thumb) = thumbnail_path {
+        let _ = fs::remove_file(thumb);
+    }
+
     append_log(&log_path, "=== rust-download mode done ===");
 
     if !config.quiet {
-        println!("[flow] 4/4 完了");
-    }
-    if !config.quiet {
+        println!("[flow] 5/5 完了");
         println!("\n✓ Rustダウンロードが完了しました。\n");
     }
 
