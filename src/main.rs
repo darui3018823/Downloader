@@ -833,6 +833,8 @@ struct RustMediaStream {
     ext: String,
     protocol: String,
     headers: Vec<(String, String)>,
+    filesize: Option<u64>,
+    filesize_approx: Option<u64>,
     format_id: Option<String>,
     vcodec: Option<String>,
     acodec: Option<String>,
@@ -859,7 +861,43 @@ fn is_stream_protocol(protocol: &str) -> bool {
         || lower.contains("fragment")
 }
 
-fn stream_from_value(value: &Value) -> Option<RustMediaStream> {
+fn value_to_u64(v: &Value) -> Option<u64> {
+    v.as_u64().or_else(|| v.as_f64().map(|n| n as u64))
+}
+
+fn headers_from_value(value: &Value) -> Vec<(String, String)> {
+    let mut headers = Vec::new();
+    if let Some(map) = value.get("http_headers").and_then(Value::as_object) {
+        for (key, val) in map {
+            if let Some(text) = val.as_str() {
+                headers.push((key.clone(), text.to_string()));
+            }
+        }
+    }
+    headers
+}
+
+fn merge_http_headers(
+    base_headers: &[(String, String)],
+    override_headers: &[(String, String)],
+) -> Vec<(String, String)> {
+    let mut merged = base_headers.to_vec();
+
+    for (key, value) in override_headers {
+        if let Some(index) = merged
+            .iter()
+            .position(|(existing, _)| existing.eq_ignore_ascii_case(key))
+        {
+            merged[index] = (key.clone(), value.clone());
+        } else {
+            merged.push((key.clone(), value.clone()));
+        }
+    }
+
+    merged
+}
+
+fn stream_from_value(value: &Value, base_headers: &[(String, String)]) -> Option<RustMediaStream> {
     let media_url = value.get("url")?.as_str()?.to_string();
     if media_url.is_empty() {
         return None;
@@ -898,14 +936,11 @@ fn stream_from_value(value: &Value) -> Option<RustMediaStream> {
         .and_then(Value::as_str)
         .map(|s| s.to_string());
 
-    let mut headers = Vec::new();
-    if let Some(map) = value.get("http_headers").and_then(Value::as_object) {
-        for (key, val) in map {
-            if let Some(text) = val.as_str() {
-                headers.push((key.clone(), text.to_string()));
-            }
-        }
-    }
+    let stream_headers = headers_from_value(value);
+    let headers = merge_http_headers(base_headers, &stream_headers);
+
+    let filesize = value.get("filesize").and_then(value_to_u64);
+    let filesize_approx = value.get("filesize_approx").and_then(value_to_u64);
 
     let score = value
         .get("tbr")
@@ -919,6 +954,8 @@ fn stream_from_value(value: &Value) -> Option<RustMediaStream> {
         ext,
         protocol,
         headers,
+        filesize,
+        filesize_approx,
         format_id,
         vcodec,
         acodec,
@@ -961,10 +998,11 @@ fn extract_candidate_from_json(
         });
 
     let mut streams = Vec::new();
+    let base_headers = headers_from_value(metadata);
 
     if let Some(requested_formats) = metadata.get("requested_formats").and_then(Value::as_array) {
         for value in requested_formats {
-            if let Some(stream) = stream_from_value(value) {
+            if let Some(stream) = stream_from_value(value, &base_headers) {
                 streams.push(stream);
             }
         }
@@ -973,7 +1011,7 @@ fn extract_candidate_from_json(
     if streams.is_empty() {
         if let Some(formats) = metadata.get("formats").and_then(Value::as_array) {
             for value in formats {
-                if let Some(stream) = stream_from_value(value) {
+                if let Some(stream) = stream_from_value(value, &base_headers) {
                     streams.push(stream);
                 }
             }
@@ -981,7 +1019,7 @@ fn extract_candidate_from_json(
     }
 
     if streams.is_empty() {
-        if let Some(single) = stream_from_value(metadata) {
+        if let Some(single) = stream_from_value(metadata, &base_headers) {
             streams.push(single);
         }
     }
@@ -1183,7 +1221,14 @@ async fn rust_download_stream(
         .send()
         .await
         .context("HEADリクエストに失敗しました")?;
-    let total_size = head_response.content_length().filter(|size| *size > 0);
+    let head_content_length = head_response.content_length().filter(|size| *size > 0);
+    let json_content_length = stream.filesize.filter(|size| *size > 0).or_else(|| {
+        stream
+            .filesize_approx
+            .filter(|size| *size > 0)
+            .map(|size| size as u64)
+    });
+    let total_size = head_content_length.or(json_content_length);
     let accept_ranges = head_response
         .headers()
         .get("accept-ranges")
@@ -1228,6 +1273,18 @@ async fn rust_download_stream(
         log_path,
         &format!("[download] total_size: {:?}", total_size),
     );
+    append_log(
+        log_path,
+        &format!("[download] head_content_length: {:?}", head_content_length),
+    );
+    append_log(
+        log_path,
+        &format!("[download] json_filesize: {:?}", stream.filesize),
+    );
+    append_log(
+        log_path,
+        &format!("[download] json_filesize_approx: {:?}", stream.filesize_approx),
+    );
 
     if let Some(total) = total_size {
         progress_bar.set_length(total);
@@ -1235,7 +1292,7 @@ async fn rust_download_stream(
         progress_bar.set_message(format!("{} (size unknown)", progress_bar.message()));
     }
 
-    if head_response.status().is_success() && accept_ranges && total_size.is_some() {
+    if head_response.status().is_success() && total_size.is_some() {
         let total = total_size.unwrap_or(0);
         let mut file = tokio::fs::File::create(output_path)
             .await
@@ -1251,6 +1308,13 @@ async fn rust_download_stream(
 
         let chunk_size = tuning.chunk_size_bytes.max(1024 * 1024);
         let worker_count = tuning.chunk_workers.max(1);
+        append_log(
+            log_path,
+            &format!(
+                "[download] parallel_range enabled total={} chunk_size={} workers={}",
+                total, chunk_size, worker_count
+            ),
+        );
         let semaphore = Arc::new(tokio::sync::Semaphore::new(worker_count));
         let mut handles = Vec::new();
 
