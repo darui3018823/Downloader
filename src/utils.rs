@@ -6,17 +6,19 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn sanitize_file_name(input: &str) -> String {
-    let invalid = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
     let mut result = input
-        .chars()
-        .map(|c| {
-            if invalid.contains(&c) || c.is_control() {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect::<String>();
+        .replace('/', "⧸")
+        .replace('\\', "⧹")
+        .replace('|', "⏐")
+        .replace('<', "＜")
+        .replace('>', "＞")
+        .replace('?', "？")
+        .replace('*', "＊")
+        .replace(':', "：")
+        .replace('"', "＂");
+
+    // 制御文字を除去
+    result.retain(|c| !c.is_control());
 
     result = result.trim().to_string();
     if result.is_empty() {

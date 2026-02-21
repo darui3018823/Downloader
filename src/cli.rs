@@ -27,7 +27,7 @@ pub fn parse_threads(value: &str) -> std::result::Result<usize, String> {
 /// yt-dlpを使用した動画ダウンローダー
 #[derive(Parser)]
 #[command(name = "downloader")]
-#[command(version = "2.0.0-rc-3")]
+#[command(version = "2.0.0-rc-4")]
 #[command(about = "yt-dlpを使用した動画ダウンローダー", long_about = None)]
 pub struct Cli {
     /// 単一URLをダウンロードして終了
