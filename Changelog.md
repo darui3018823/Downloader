@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [v2-beta5] - 2026-02-21
+
+### Improved
+- Stabilized `--rust-download` async range/chunk downloader path with `indicatif`-based multi progress output.
+- Improved phase visibility and terminal UX for extract/download/merge flow.
+
 ## [v2-beta4] - 2026-02-21
 
 ### Improved
