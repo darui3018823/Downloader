@@ -5,6 +5,8 @@ use crate::ytdlp::{build_command, execute_download_command};
 use anyhow::Result;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc};
 use std::thread;
 
 pub fn download_url(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Result<()> {
@@ -70,43 +72,60 @@ pub fn download_batch(ytdlp_path: &Path, urls: &[String], config: &DownloadConfi
     let mut completed = 0usize;
     let mut failed = 0usize;
 
-    for chunk in urls.chunks(max_workers) {
-        let mut handles = Vec::with_capacity(chunk.len());
+    let total_urls = urls.len();
+    let urls_arc = Arc::new(urls.to_vec());
+    let current_idx = Arc::new(AtomicUsize::new(0));
+    let (tx, rx) = mpsc::channel();
 
-        for url in chunk {
-            let ytdlp_path = ytdlp_path.to_path_buf();
-            let config = config.clone();
-            let url = url.clone();
+    let mut handles = Vec::with_capacity(max_workers);
 
-            handles.push(thread::spawn(move || {
-                if url.trim().is_empty() {
-                    return (url, Ok(()));
-                }
+    for _ in 0..max_workers {
+        let urls = Arc::clone(&urls_arc);
+        let current_idx = Arc::clone(&current_idx);
+        let tx = tx.clone();
+        let ytdlp_path = ytdlp_path.to_path_buf();
+        let config = config.clone();
 
-                let platform = Platform::detect(&url);
-                let cmd = build_command(&ytdlp_path, platform, &url, &config, false);
-                let result = execute_download_command(cmd, true);
-                (url, result)
-            }));
-        }
+        handles.push(thread::spawn(move || loop {
+            let idx = current_idx.fetch_add(1, Ordering::SeqCst);
+            if idx >= urls.len() {
+                break;
+            }
 
-        for handle in handles {
-            match handle.join() {
-                Ok((url, Ok(()))) => {
-                    completed += 1;
-                    if !config.quiet {
-                        println!("[{}/{}] 完了: {}", completed + failed, urls.len(), url);
-                    }
-                }
-                Ok((url, Err(e))) => {
-                    failed += 1;
-                    eprintln!("エラー ({}): {}", url, e);
-                }
-                Err(_) => {
-                    failed += 1;
-                    eprintln!("エラー: ダウンロードスレッドがpanicしました");
+            let url = urls[idx].clone();
+            if url.trim().is_empty() {
+                let _ = tx.send((url, Ok(())));
+                continue;
+            }
+
+            let platform = Platform::detect(&url);
+            let cmd = build_command(&ytdlp_path, platform, &url, &config, false);
+            let result = execute_download_command(cmd, true);
+            let _ = tx.send((url, result));
+        }));
+    }
+
+    drop(tx);
+
+    for (url, result) in rx {
+        match result {
+            Ok(()) => {
+                completed += 1;
+                if !config.quiet {
+                    println!("[{}/{}] 完了: {}", completed + failed, total_urls, url);
                 }
             }
+            Err(e) => {
+                failed += 1;
+                eprintln!("エラー ({}): {}", url, e);
+            }
+        }
+    }
+
+    for handle in handles {
+        if handle.join().is_err() {
+            failed += 1;
+            eprintln!("エラー: ダウンロードスレッドがpanicしました");
         }
     }
 

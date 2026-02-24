@@ -374,8 +374,13 @@ async fn download_range_chunk(
         .bytes()
         .await
         .context("Rangeレスポンス読み取りに失敗しました")?;
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
+    let mut opts = tokio::fs::OpenOptions::new();
+    opts.write(true);
+    #[cfg(windows)]
+    {
+        opts.custom_flags(0x00000001 | 0x00000002); // FILE_SHARE_READ | FILE_SHARE_WRITE
+    }
+    let mut file = opts
         .open(&output_path)
         .await
         .with_context(|| format!("出力ファイルを開けません: {}", output_path.display()))?;
@@ -406,6 +411,7 @@ async fn rust_download_stream(
     progress_bar: ProgressBar,
     tuning: RustDownloadTuning,
     dev: bool,
+    semaphore: Arc<tokio::sync::Semaphore>,
 ) -> Result<()> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(30))
@@ -512,11 +518,15 @@ async fn rust_download_stream(
     if head_response.status().is_success() && total_size.is_some() && accept_ranges {
         let total = total_size.unwrap_or(0);
         {
-            let mut file = tokio::fs::File::create(output_path)
-                .await
-                .with_context(|| {
-                    format!("出力ファイル作成に失敗しました: {}", output_path.display())
-                })?;
+            let mut opts = tokio::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            #[cfg(windows)]
+            {
+                opts.custom_flags(0x00000001 | 0x00000002); // FILE_SHARE_READ | FILE_SHARE_WRITE
+            }
+            let mut file = opts.open(output_path).await.with_context(|| {
+                format!("出力ファイル作成に失敗しました: {}", output_path.display())
+            })?;
             file.set_len(total).await.with_context(|| {
                 format!("出力ファイル拡張に失敗しました: {}", output_path.display())
             })?;
@@ -540,7 +550,6 @@ async fn rust_download_stream(
                 total, chunk_size, worker_count
             );
         }
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(worker_count));
         let mut handles = Vec::new();
 
         let mut start = 0u64;
@@ -1178,6 +1187,8 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
 
         let multi = MultiProgress::new();
         let single_pb = make_download_progress_bar(Some(&multi), "single", config.quiet)?;
+        let worker_count = tuning.chunk_workers.max(1);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(worker_count));
 
         runtime
             .block_on(rust_download_stream(
@@ -1187,6 +1198,7 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
                 single_pb,
                 tuning,
                 config.dev,
+                semaphore,
             ))
             .with_context(|| {
                 format!(
@@ -1220,6 +1232,8 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
         let multi = MultiProgress::new();
         let video_pb = make_download_progress_bar(Some(&multi), "video", config.quiet)?;
         let audio_pb = make_download_progress_bar(Some(&multi), "audio", config.quiet)?;
+        let worker_count = tuning.chunk_workers.max(1);
+        let shared_semaphore = Arc::new(tokio::sync::Semaphore::new(worker_count));
 
         let split_result = runtime.block_on(async {
             tokio::try_join!(
@@ -1229,7 +1243,8 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
                     &log_path,
                     video_pb,
                     tuning,
-                    config.dev
+                    config.dev,
+                    shared_semaphore.clone(),
                 ),
                 rust_download_stream(
                     audio_stream,
@@ -1237,7 +1252,8 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
                     &log_path,
                     audio_pb,
                     tuning,
-                    config.dev
+                    config.dev,
+                    shared_semaphore.clone(),
                 ),
             )
         });

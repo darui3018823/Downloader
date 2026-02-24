@@ -56,7 +56,15 @@ pub fn new_error_log_path(url: &str) -> Result<PathBuf> {
 }
 
 pub fn append_log(log_path: &Path, message: &str) {
-    let mut file = match OpenOptions::new().create(true).append(true).open(log_path) {
+    let mut opts = OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        opts.share_mode(0x00000001 | 0x00000002 | 0x00000004);
+    }
+
+    let mut file = match opts.open(log_path) {
         Ok(file) => file,
         Err(_) => return,
     };
