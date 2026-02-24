@@ -1088,7 +1088,10 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
     // FFmpeg は同一ファイルへのインプレース変換ができず、
     // また出力ファイルの拡張子でフォーマットを特定するため、確実に .mp4 で終わる別名を用意
     let transcode_temp_path = if config.hevc {
-        let file_stem = final_output_path.file_stem().unwrap().to_os_string();
+        let file_stem = final_output_path
+            .file_stem()
+            .context("ファイル名の取得に失敗しました")?
+            .to_os_string();
         let mut temp_name = file_stem;
         temp_name.push(".tmp.mp4");
         final_output_path.with_file_name(temp_name)

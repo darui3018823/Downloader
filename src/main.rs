@@ -10,7 +10,7 @@ mod update;
 mod utils;
 mod ytdlp;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 
 use crate::benchmark::run_benchmark;
@@ -84,7 +84,7 @@ fn main() -> Result<()> {
     }
 
     if !cli.quiet {
-        println!("=== yt-dlp Video Downloader v2-rc-5 ===\n");
+        println!("=== yt-dlp Video Downloader v2.0.0 ===\n");
     }
 
     let ytdlp_path = ensure_ytdlp(false)?;
@@ -96,7 +96,7 @@ fn main() -> Result<()> {
     let config = DownloadConfig::from_cli(&cli);
 
     if cli.benchmark {
-        let url = cli.url.as_deref().unwrap();
+        let url = cli.url.as_deref().context("--url が指定されていません")?;
         return run_benchmark(&ytdlp_path, url, &config);
     }
 
