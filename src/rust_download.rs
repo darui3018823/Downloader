@@ -409,7 +409,7 @@ async fn rust_download_stream(
 ) -> Result<()> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(30))
-        .timeout(Duration::from_secs(300))
+        .timeout(Duration::from_secs(3600))
         .build()
         .context("HTTPクライアントの作成に失敗しました")?;
     let client = Arc::new(client);
