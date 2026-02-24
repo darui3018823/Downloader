@@ -511,17 +511,19 @@ async fn rust_download_stream(
 
     if head_response.status().is_success() && total_size.is_some() && accept_ranges {
         let total = total_size.unwrap_or(0);
-        let mut file = tokio::fs::File::create(output_path)
-            .await
-            .with_context(|| {
-                format!("出力ファイル作成に失敗しました: {}", output_path.display())
+        {
+            let mut file = tokio::fs::File::create(output_path)
+                .await
+                .with_context(|| {
+                    format!("出力ファイル作成に失敗しました: {}", output_path.display())
+                })?;
+            file.set_len(total).await.with_context(|| {
+                format!("出力ファイル拡張に失敗しました: {}", output_path.display())
             })?;
-        file.set_len(total).await.with_context(|| {
-            format!("出力ファイル拡張に失敗しました: {}", output_path.display())
-        })?;
-        file.flush()
-            .await
-            .context("初期ファイルflushに失敗しました")?;
+            file.flush()
+                .await
+                .context("初期ファイルflushに失敗しました")?;
+        }
 
         let chunk_size = tuning.chunk_size_bytes.max(1024 * 1024);
         let worker_count = tuning.chunk_workers.max(1);
