@@ -47,7 +47,7 @@ pub fn show_credits() {
     println!("║                                                              ║");
     println!("║  Features:                                                   ║");
     println!("║    ✓ Auto-download yt-dlp from GitHub Releases               ║");
-    println!("║    ✓ Platform detection (YouTube, Twitch, Twitter/X)         ║");
+    println!("║    ✓ Platform detection (YouTube, Twitch, X, SoundCloud)     ║");
     println!("║    ✓ Interactive loop mode                                   ║");
     println!("║    ✓ Single URL & Batch download modes                       ║");
     println!("║    ✓ Audio-only download (mp3)                               ║");

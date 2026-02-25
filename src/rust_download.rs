@@ -1,5 +1,6 @@
 use crate::config::{DownloadConfig, RustDownloadTuning};
 use crate::gpu::{detect_gpu_encoder, try_encoder_fallback, GpuEncoder};
+use crate::platform::Platform;
 use crate::progress::{make_download_progress_bar, make_phase_spinner, progress_style_known};
 use crate::utils::{append_log, dev_println, new_error_log_path, sanitize_file_name};
 use anyhow::{bail, Context, Result};
@@ -181,6 +182,7 @@ where
 fn extract_candidate_from_json(
     metadata: &Value,
     config: &DownloadConfig,
+    platform: Platform,
 ) -> Result<RustDownloadCandidate> {
     let title = metadata
         .get("title")
@@ -226,7 +228,7 @@ fn extract_candidate_from_json(
         bail!("抽出JSONに直リンクURLがありません");
     }
 
-    if config.audio_only {
+    if config.audio_only || matches!(platform, Platform::SoundCloud) {
         let selected = best_stream(&streams, |s| {
             is_usable_stream(s) && s.has_audio && !s.has_video
         })
@@ -287,7 +289,9 @@ fn extract_with_ytdlp(
     let mut cmd = Command::new(ytdlp_path);
     cmd.args(["-J", "--no-playlist"]);
 
-    if config.audio_only {
+    let platform = Platform::detect(url);
+
+    if config.audio_only || matches!(platform, Platform::SoundCloud) {
         cmd.args(["-f", "bestaudio/best"]);
     } else if config.mp4_compat {
         cmd.args(["-f", "best/bv*+ba/b"]);
@@ -1076,7 +1080,8 @@ pub fn download_single_rust(ytdlp_path: &Path, url: &str, config: &DownloadConfi
 
     let metadata = extract_with_ytdlp(ytdlp_path, url, config, &log_path)
         .with_context(|| format!("抽出処理に失敗しました。ログ: {}", log_path.display()))?;
-    let candidate = extract_candidate_from_json(&metadata, config)
+    let platform = Platform::detect(url);
+    let candidate = extract_candidate_from_json(&metadata, config, platform)
         .with_context(|| format!("抽出結果の解釈に失敗しました。ログ: {}", log_path.display()))?;
     let media_meta = extract_metadata_from_json(&metadata);
     let tuning = config.resolve_rust_tuning();
