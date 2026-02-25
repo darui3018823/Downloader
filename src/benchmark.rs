@@ -232,10 +232,10 @@ fn print_result_table(
         tuning.chunk_size_bytes / (1024 * 1024),
         tuning.chunk_workers,
         tuning.runtime_threads,
-        if config.rust_max_perf {
+        if !config.rust_normal_perf {
             " (max-perf)"
         } else {
-            ""
+            " (normal-perf)"
         },
     );
     println!("╠═══════════════╦════════════╦════════════╦═══════════╦══════════════╣");

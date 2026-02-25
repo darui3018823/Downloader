@@ -123,9 +123,9 @@ pub struct Cli {
     #[arg(long, value_parser = parse_threads)]
     pub rust_runtime_threads: Option<usize>,
 
-    /// Rustダウンロードを全力設定で実行（CPU/並列を強める）
+    /// Rustダウンロードを通常速度で実行（CPU/並列を抑える）
     #[arg(long)]
-    pub rust_max_perf: bool,
+    pub rust_normal_perf: bool,
 
     /// MP4互換モード (H.264/AAC) でダウンロード
     #[arg(long)]

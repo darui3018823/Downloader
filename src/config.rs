@@ -29,7 +29,7 @@ pub struct DownloadConfig {
     pub rust_chunk_mb: Option<u64>,
     pub rust_chunk_workers: Option<usize>,
     pub rust_runtime_threads: Option<usize>,
-    pub rust_max_perf: bool,
+    pub rust_normal_perf: bool,
     pub mp4_compat: bool,
     pub hevc: bool,
     pub ten_bit: bool,
@@ -64,7 +64,7 @@ impl DownloadConfig {
             rust_chunk_mb: cli.rust_chunk_mb,
             rust_chunk_workers: cli.rust_chunk_workers,
             rust_runtime_threads: cli.rust_runtime_threads,
-            rust_max_perf: cli.rust_max_perf,
+            rust_normal_perf: cli.rust_normal_perf,
             mp4_compat: cli.mp4_compat,
             hevc: cli.hevc,
             ten_bit: cli.ten_bit,
@@ -81,21 +81,25 @@ impl DownloadConfig {
         let max_perf_chunk_workers = (logical_cores * 4).max(8);
         let max_perf_runtime_threads = (logical_cores * 2).max(4);
 
-        let chunk_mb = self.rust_chunk_mb.unwrap_or(if self.rust_max_perf {
+        let chunk_mb = self.rust_chunk_mb.unwrap_or(if !self.rust_normal_perf {
             max_perf_chunk_mb
         } else {
             DEFAULT_RUST_CHUNK_SIZE_MB
         });
-        let chunk_workers = self.rust_chunk_workers.unwrap_or(if self.rust_max_perf {
-            max_perf_chunk_workers
-        } else {
-            DEFAULT_RUST_CHUNK_WORKERS
-        });
-        let runtime_threads = self.rust_runtime_threads.unwrap_or(if self.rust_max_perf {
-            max_perf_runtime_threads
-        } else {
-            DEFAULT_RUST_RUNTIME_THREADS
-        });
+        let chunk_workers = self
+            .rust_chunk_workers
+            .unwrap_or(if !self.rust_normal_perf {
+                max_perf_chunk_workers
+            } else {
+                DEFAULT_RUST_CHUNK_WORKERS
+            });
+        let runtime_threads = self
+            .rust_runtime_threads
+            .unwrap_or(if !self.rust_normal_perf {
+                max_perf_runtime_threads
+            } else {
+                DEFAULT_RUST_RUNTIME_THREADS
+            });
 
         RustDownloadTuning {
             chunk_size_bytes: chunk_mb.saturating_mul(1024 * 1024),

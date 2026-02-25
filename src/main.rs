@@ -23,7 +23,7 @@ use crate::ytdlp::ensure_ytdlp;
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let has_rust_perf_flags = cli.rust_max_perf
+    let has_rust_perf_flags = cli.rust_normal_perf
         || cli.rust_chunk_mb.is_some()
         || cli.rust_chunk_workers.is_some()
         || cli.rust_runtime_threads.is_some();
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
 
     if has_rust_perf_flags && !cli.rust_download && !cli.benchmark {
         bail!(
-            "--rust-chunk-mb / --rust-chunk-workers / --rust-runtime-threads / --rust-max-perf は --rust-download または --benchmark と一緒に指定してください"
+            "--rust-chunk-mb / --rust-chunk-workers / --rust-runtime-threads / --rust-normal-perf は --rust-download または --benchmark と一緒に指定してください"
         );
     }
 
