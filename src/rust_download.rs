@@ -294,10 +294,10 @@ fn extract_with_ytdlp(
     if config.audio_only || matches!(platform, Platform::SoundCloud) {
         cmd.args(["-f", "bestaudio/best"]);
     } else if config.mp4_compat {
-        cmd.args(["-f", "best/bv*+ba/b"]);
+        cmd.args(["-f", "bestvideo[vcodec^=avc]+bestaudio[acodec^=m4a]/bestvideo+bestaudio/best"]);
     } else {
         // デフォルト: yt-dlp の自動選択（最高効率 AV1/Opus 等）
-        cmd.args(["-f", "bv*+ba/b"]);
+        cmd.args(["-f", "bestvideo+bestaudio/best"]);
     }
 
     if let Some(cookies) = &config.cookies {
