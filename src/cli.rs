@@ -15,10 +15,10 @@ pub fn parse_u64_ge1(value: &str) -> std::result::Result<u64, String> {
 pub fn parse_threads(value: &str) -> std::result::Result<usize, String> {
     let parsed = value
         .parse::<usize>()
-        .map_err(|_| "--threads には1以上の整数を指定してください".to_string())?;
+        .map_err(|_| "1以上の整数を指定してください".to_string())?;
 
     if parsed == 0 {
-        return Err("--threads には1以上の整数を指定してください".to_string());
+        return Err("1以上の整数を指定してください".to_string());
     }
 
     Ok(parsed)

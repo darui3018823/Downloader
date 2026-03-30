@@ -10,7 +10,7 @@ use std::time::Duration;
 
 pub fn show_credits() {
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║                 Video Downloader v2-rc-4                     ║");
+    println!("║                 Video Downloader v{}                     ║", env!("CARGO_PKG_VERSION"));
     println!("╠══════════════════════════════════════════════════════════════╣");
     println!("║  A Rust-based video downloader powered by yt-dlp             ║");
     println!("║                                                              ║");

@@ -61,7 +61,10 @@ pub fn append_log(log_path: &Path, message: &str) {
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
-        opts.share_mode(0x00000001 | 0x00000002 | 0x00000004);
+        const FILE_SHARE_READ: u32 = 0x00000001;
+        const FILE_SHARE_WRITE: u32 = 0x00000002;
+        const FILE_SHARE_DELETE: u32 = 0x00000004;
+        opts.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
     }
 
     let mut file = match opts.open(log_path) {

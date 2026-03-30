@@ -109,16 +109,16 @@ Use yt-dlp for extraction only, then perform the actual file download in Rust.
 .\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download
 ```
 
-High-performance stress test example:
+High-performance is the default. To use a more conservative mode (less CPU/parallelism):
 
 ```bash
-.\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download --rust-max-perf
+.\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download --rust-normal-perf
 ```
 
 Developer diagnostics example (prints detailed stream/range info to terminal):
 
 ```bash
-.\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download --rust-max-perf --dev
+.\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download --dev
 ```
 
 - `--rust-download` is available only with `--url` (single URL mode)
@@ -126,7 +126,8 @@ Developer diagnostics example (prints detailed stream/range info to terminal):
 - If it hangs or fails, rerun without `--rust-download`
 - Detailed logs are written to `%USERPROFILE%/downloader/errorlog/*.log`
 - Tuning options (with `--rust-download`):
-  - `--rust-max-perf` (aggressive defaults)
+  - By default, aggressive performance settings are used
+  - `--rust-normal-perf`: use more conservative settings to reduce CPU and network load
   - `--rust-chunk-mb <int>`
   - `--rust-chunk-workers <int>`
   - `--rust-runtime-threads <int>`

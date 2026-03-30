@@ -382,7 +382,9 @@ async fn download_range_chunk(
     opts.write(true);
     #[cfg(windows)]
     {
-        opts.custom_flags(0x00000001 | 0x00000002); // FILE_SHARE_READ | FILE_SHARE_WRITE
+        const FILE_SHARE_READ: u32 = 0x00000001;
+        const FILE_SHARE_WRITE: u32 = 0x00000002;
+        opts.custom_flags(FILE_SHARE_READ | FILE_SHARE_WRITE);
     }
     let mut file = opts
         .open(&output_path)
@@ -526,7 +528,9 @@ async fn rust_download_stream(
             opts.write(true).create(true).truncate(true);
             #[cfg(windows)]
             {
-                opts.custom_flags(0x00000001 | 0x00000002); // FILE_SHARE_READ | FILE_SHARE_WRITE
+                const FILE_SHARE_READ: u32 = 0x00000001;
+                const FILE_SHARE_WRITE: u32 = 0x00000002;
+                opts.custom_flags(FILE_SHARE_READ | FILE_SHARE_WRITE);
             }
             let mut file = opts.open(output_path).await.with_context(|| {
                 format!("出力ファイル作成に失敗しました: {}", output_path.display())
