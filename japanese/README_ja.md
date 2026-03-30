@@ -102,6 +102,37 @@ URL> exit  # または quit、Ctrl+C で終了
 .\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..."
 ```
 
+### 実験機能: Rustダウンロードモード (`--rust-download`)
+
+yt-dlp には抽出だけを行わせ、実際のファイルダウンロードは Rust 側で実行します。
+
+```bash
+.\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download
+```
+
+高負荷テスト向けの例:
+
+```bash
+.\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download --rust-max-perf
+```
+
+開発者向け詳細表示の例（ストリーム/Range情報をTerminalへ表示）:
+
+```bash
+.\target\release\downloader.exe --url "https://www.youtube.com/watch?v=..." --rust-download --rust-max-perf --dev
+```
+
+- `--rust-download` は `--url`（単一URLモード）専用です
+- このモードでは通常の yt-dlp ダウンロードへの自動フォールバックはしません
+- ハング/失敗した場合は `--rust-download` を外して再実行してください
+- 詳細ログは `%USERPROFILE%/downloader/errorlog/*.log` に出力されます
+- 調整オプション（`--rust-download` と併用）:
+  - `--rust-max-perf`（攻めたデフォルト設定）
+  - `--rust-chunk-mb <整数>`
+  - `--rust-chunk-workers <整数>`
+  - `--rust-runtime-threads <整数>`
+- `--dev`: 開発者向け詳細診断をTerminalに表示
+
 ### モード3: バッチモード
 
 複数のURLを一度にダウンロードします。

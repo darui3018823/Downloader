@@ -153,3 +153,13 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  checksums:
+    needs: release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/checksums.yml
+    with:
+      artifact-name: downloader-windows-x86_64.exe
+      tag: ${{ github.ref_name }}
+      pattern: "downloader.exe"

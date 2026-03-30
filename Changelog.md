@@ -2,6 +2,67 @@
 
 All notable changes to this project are documented in this file.
 
+## [v2-rc-1] - 2026-02-21
+
+### Added
+- `--dev` flag for developer diagnostics in terminal (stream/range/parallel info)
+
+### Improved
+- Progress bar and spinner output no longer overlap; phase and download progress are visually separated and cleaner
+
+### Docs
+- Documented `--dev` usage in both English and Japanese README
+
+## [v2-beta7] - 2026-02-21
+
+### Added
+- Added high-performance tuning options for `--rust-download`: `--rust-max-perf`, `--rust-chunk-mb`, `--rust-chunk-workers`, and `--rust-runtime-threads`.
+
+### Improved
+- Replaced fixed Rust downloader chunk/runtime values with configurable tuning resolved at runtime.
+- Added startup display of effective Rust tuning values in `--rust-download` mode.
+
+## [v2-beta6] - 2026-02-21
+
+### Fixed
+- Fixed `--rust-download` failure path when `Accept-Ranges` is present but `Content-Length` is missing by falling back to streamed GET.
+
+## [v2-beta5] - 2026-02-21
+
+### Improved
+- Stabilized `--rust-download` async range/chunk downloader path with `indicatif`-based multi progress output.
+- Improved phase visibility and terminal UX for extract/download/merge flow.
+
+## [v2-beta4] - 2026-02-21
+
+### Improved
+- Parallelized split stream downloads (video/audio) in `--rust-download` mode for better speed.
+- Added terminal flow stages and per-stream progress percentage output.
+
+## [v2-beta3] - 2026-02-21
+
+### Added
+- Added split stream handling in `--rust-download` mode to download video/audio streams separately and merge with `ffmpeg -c copy`.
+
+### Improved
+- Added richer stream diagnostics (`format_id`, codec info) to error logs for investigation.
+
+## [v2-beta2] - 2026-02-21
+
+### Fixed
+- Improved `--rust-download` extraction parsing to pick direct media URLs from `requested_formats` / `formats` when `requested_downloads` is missing.
+- Improved extraction format selection to reduce false negatives for single URL Rust download mode.
+
+## [v2-beta1] - 2026-02-21
+
+### Added
+- Added experimental `--rust-download` mode for single URL operation.
+- Added detailed investigation logs under `%USERPROFILE%/downloader/errorlog/*.log`.
+
+### Changed
+- In `--rust-download` mode, yt-dlp is used for extraction only (`-J`) and actual download is handled by Rust.
+- No automatic fallback in this mode; rerun without `--rust-download` when hang/failure occurs.
+
 ## [1.3.3] - 2026-02-21
 
 ### Added
