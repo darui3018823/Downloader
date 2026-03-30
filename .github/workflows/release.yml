@@ -158,7 +158,7 @@ jobs:
     needs: release
     permissions:
       contents: write
-    uses: darui3018823/winget-server/.github/workflows/checksums.yml@master
+    uses: ./.github/workflows/checksums.yml
     with:
       artifact-name: downloader-windows-x86_64.exe
       tag: ${{ github.ref_name }}

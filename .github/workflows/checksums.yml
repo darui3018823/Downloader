@@ -1,0 +1,54 @@
+name: Generate Checksums
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: "Artifact name (also used as the filename in checksums.txt)"
+        required: true
+        type: string
+      tag:
+        description: "Release tag (e.g. v1.0.0)"
+        required: true
+        type: string
+      pattern:
+        description: "Glob pattern to find the file inside the artifact (default: all files)"
+        required: false
+        default: "*"
+        type: string
+
+jobs:
+  checksums:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist/
+
+      - name: Rename to asset name
+        working-directory: dist
+        run: |
+          src=$(ls ${{ inputs.pattern }} | head -1)
+          if [ "$src" != "${{ inputs.artifact-name }}" ]; then
+            mv "$src" "${{ inputs.artifact-name }}"
+          fi
+
+      - name: Generate checksums.txt
+        working-directory: dist
+        run: |
+          sha256sum "${{ inputs.artifact-name }}" | tee checksums.txt
+          echo "--- checksums.txt ---"
+          cat checksums.txt
+
+      - name: Upload checksums.txt to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload ${{ inputs.tag }} dist/checksums.txt \
+            --repo ${{ github.repository }} \
+            --clobber
