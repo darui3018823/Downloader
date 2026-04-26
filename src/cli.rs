@@ -139,6 +139,10 @@ pub struct Cli {
     #[arg(long = "10bit")]
     pub ten_bit: bool,
 
+    /// 出力ファイル名（拡張子込み, 例: video.mp4）--url 専用、-o と組み合わせて使用可
+    #[arg(long)]
+    pub output_name: Option<String>,
+
     /// クレジット情報を表示
     #[arg(long)]
     pub credit: bool,

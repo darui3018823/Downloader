@@ -1,6 +1,8 @@
 use anyhow::{bail, Context, Result};
+use std::fs;
 use std::io::{self, BufRead, Write};
-use std::process::Command;
+use std::path::Path;
+use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuEncoder {
@@ -104,6 +106,60 @@ impl GpuEncoder {
 
         args
     }
+}
+
+/// 通常ダウンロードパス向けのシンプルな HEVC 変換。
+/// 成功時は元ファイルを上書きして `Ok(true)`、ffmpeg 失敗時は `Ok(false)` を返す。
+pub fn run_hevc_transcode(
+    input: &Path,
+    encoder: GpuEncoder,
+    ten_bit: bool,
+    quiet: bool,
+) -> Result<bool> {
+    let parent = input.parent().unwrap_or(Path::new("."));
+    let stem = input
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let ext = input
+        .extension()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let tmp_name = format!("{}_hevc_tmp.{}", stem, ext);
+    let tmp_path = parent.join(&tmp_name);
+
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-hide_banner", "-y"]);
+
+    for arg in encoder.hwaccel_args() {
+        cmd.arg(arg);
+    }
+
+    cmd.args(["-i", &input.to_string_lossy()]);
+
+    for arg in encoder.build_encode_args(ten_bit) {
+        cmd.arg(arg);
+    }
+
+    cmd.arg(tmp_path.as_os_str());
+
+    if quiet {
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+
+    let status = cmd
+        .status()
+        .context("FFmpeg HEVC変換の起動に失敗しました")?;
+
+    if !status.success() {
+        let _ = fs::remove_file(&tmp_path);
+        return Ok(false);
+    }
+
+    fs::rename(&tmp_path, input).context("HEVC変換後ファイルのリネームに失敗しました")?;
+    Ok(true)
 }
 
 fn check_encoder_available(encoder_name: &str) -> bool {

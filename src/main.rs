@@ -52,6 +52,10 @@ fn main() -> Result<()> {
         bail!("--mp4-compat と --hevc は同時に指定できません（--hevc はAV1ソースからの変換を前提としています）");
     }
 
+    if cli.output_name.is_some() && cli.url.is_none() {
+        bail!("--output-name は --url と組み合わせて使用してください");
+    }
+
     if cli.benchmark {
         if cli.url.is_none() {
             bail!("--benchmark は --url と一緒に指定してください");

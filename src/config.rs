@@ -33,6 +33,7 @@ pub struct DownloadConfig {
     pub mp4_compat: bool,
     pub hevc: bool,
     pub ten_bit: bool,
+    pub output_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -68,6 +69,7 @@ impl DownloadConfig {
             mp4_compat: cli.mp4_compat,
             hevc: cli.hevc,
             ten_bit: cli.ten_bit,
+            output_name: cli.output_name.clone(),
         }
     }
 

@@ -15,7 +15,8 @@ pub fn sanitize_file_name(input: &str) -> String {
         .replace('?', "？")
         .replace('*', "＊")
         .replace(':', "：")
-        .replace('"', "＂");
+        .replace('"', "＂")
+        .replace('#', "＃");
 
     result.retain(|c| !c.is_control());
 

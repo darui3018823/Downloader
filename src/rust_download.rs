@@ -387,7 +387,7 @@ async fn download_range_chunk(
     {
         const FILE_SHARE_READ: u32 = 0x00000001;
         const FILE_SHARE_WRITE: u32 = 0x00000002;
-        opts.custom_flags(FILE_SHARE_READ | FILE_SHARE_WRITE);
+        opts.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
     }
     let mut file = opts
         .open(&output_path)
@@ -533,7 +533,7 @@ async fn rust_download_stream(
             {
                 const FILE_SHARE_READ: u32 = 0x00000001;
                 const FILE_SHARE_WRITE: u32 = 0x00000002;
-                opts.custom_flags(FILE_SHARE_READ | FILE_SHARE_WRITE);
+                opts.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
             }
             let mut file = opts.open(output_path).await.with_context(|| {
                 format!("出力ファイル作成に失敗しました: {}", output_path.display())
