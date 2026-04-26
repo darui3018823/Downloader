@@ -103,7 +103,11 @@ pub fn build_command(
         eprintln!("警告: 出力ディレクトリの作成に失敗: {}", e);
     }
 
-    let output_template = format!("{}/%(title)s.%(ext)s", config.output_dir);
+    let output_template = if let Some(ref name) = config.output_name {
+        format!("{}/{}", config.output_dir, name)
+    } else {
+        format!("{}/%(title)s.%(ext)s", config.output_dir)
+    };
 
     if config.audio_only {
         cmd.args(["-x", "--audio-format", "mp3"]);
