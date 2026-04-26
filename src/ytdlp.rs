@@ -209,6 +209,30 @@ pub fn build_command(
     cmd
 }
 
+/// yt-dlp に `--no-download --print after_move:filepath` を付けて実際の出力パスを取得する。
+pub fn query_output_path(
+    ytdlp_path: &Path,
+    platform: Platform,
+    url: &str,
+    config: &DownloadConfig,
+) -> Result<PathBuf> {
+    let mut cmd = build_command(ytdlp_path, platform, url, config, false);
+    cmd.args(["--no-download", "--print", "after_move:filepath"]);
+
+    let output = cmd
+        .output()
+        .context("yt-dlp による出力ファイルパスの取得に失敗しました")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let path_str = stdout.lines().next().unwrap_or("").trim();
+
+    if path_str.is_empty() {
+        bail!("yt-dlp が出力ファイルパスを返しませんでした");
+    }
+
+    Ok(PathBuf::from(path_str))
+}
+
 pub fn execute_download_command(mut cmd: Command, suppress_ytdlp_output: bool) -> Result<()> {
     if suppress_ytdlp_output {
         let output = cmd.output().context("yt-dlpの実行に失敗しました")?;

@@ -1,8 +1,9 @@
 use crate::config::DownloadConfig;
+use crate::gpu::{detect_gpu_encoder, run_hevc_transcode, try_encoder_fallback};
 use crate::platform::Platform;
 use crate::rust_download::download_single_rust;
-use crate::ytdlp::{build_command, execute_download_command};
-use anyhow::Result;
+use crate::ytdlp::{build_command, execute_download_command, query_output_path};
+use anyhow::{bail, Result};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -30,6 +31,33 @@ pub fn download_url(ytdlp_path: &Path, url: &str, config: &DownloadConfig) -> Re
 
     if !config.quiet {
         println!("\n✓ ダウンロードが完了しました。\n");
+    }
+
+    if config.hevc {
+        let output_path = query_output_path(ytdlp_path, Platform::detect(url), url, config)?;
+
+        if !config.quiet {
+            println!("HEVC変換を開始します...");
+        }
+
+        let encoder = detect_gpu_encoder(config.quiet)?;
+        let mut success = run_hevc_transcode(&output_path, encoder, config.ten_bit, config.quiet)?;
+        let mut current = encoder;
+
+        while !success {
+            match try_encoder_fallback(current, config.quiet)? {
+                Some(fb) => {
+                    current = fb;
+                    success =
+                        run_hevc_transcode(&output_path, current, config.ten_bit, config.quiet)?;
+                }
+                None => bail!("HEVC変換に失敗しました"),
+            }
+        }
+
+        if !config.quiet {
+            println!("✓ HEVC変換が完了しました。\n");
+        }
     }
 
     Ok(())
