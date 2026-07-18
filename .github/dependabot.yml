@@ -3,6 +3,8 @@ version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
+    assignees:
+      - "darui3018823"
     schedule:
       interval: "daily"
     open-pull-requests-limit: 3
